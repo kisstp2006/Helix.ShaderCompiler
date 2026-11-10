@@ -39,3 +39,28 @@ public static class Basics
 
     public static double Wide(long a, double scale) => (a + 1234567890123L) * scale * 0.5;
 }
+
+/// <summary>A uniform block with a struct inside a struct.</summary>
+public static class Nested
+{
+    public struct Light
+    {
+        public float4 color;
+        public float2 range;
+        public float2 pad;
+    }
+
+    public struct Scene
+    {
+        public float4 ambient;
+        public Light key;
+        public Light fill;
+        public float exposure;
+    }
+
+    [Uniform(4)] public static Scene scene;
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv) => scene.ambient + scene.key.color * uv.x + scene.fill.color * scene.exposure;
+}

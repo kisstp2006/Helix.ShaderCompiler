@@ -16,6 +16,7 @@ Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50, GLSL
 | `Source/Helix/ShaderCompiler/Definition/` | `ReadShaderDefinitions`: shaders, material properties, keywords, passes and render state declared in an assembly |
 | `Source/Helix/ShaderCompiler/Variants/` | `EnumerateVariants`: the keyword combinations a pass has to be compiled for |
 | `Source/Helix/ShaderCompiler/Cache/` | `CompileModule` and `ShaderCache`: one entry point for all targets, results kept by content in memory and on disk |
+| `Source/Helix/ShaderCompiler/Reflection/` | `Reflect` and `LinkReflection`: uniform block layouts, resource slots, stage inputs and outputs of a compiled variant, and whether two stages fit |
 | `Source/Helix/ShaderCompiler/Transforms/` | `Simplify`: constant folding, constant locals, removal of code, functions and resources that cannot be reached |
 | `Source/Helix/ShaderCompiler/Backends/` | `EmitGlsl`: a module to GLSL source with its binding table; `EmitDxbc`: a module to a Direct3D bytecode container |
 | `Tests/Shaders/` | C# test shaders, built with the .NET SDK during the CMake build and embedded into the test program |
@@ -97,6 +98,28 @@ materials use (`used`), so unused variants are never built. More variants than t
 code share one entry, and after the assembly is rebuilt only shaders whose reachable code changed are compiled again.
 With a directory the cache keeps one file per shader (`<key>.hxsc`), written under a temporary name first; files that
 are damaged or from another compiler version count as missing. A cache object is not thread safe.
+
+## Reflection
+
+```cpp
+ShaderReflection vertex, fragment;
+Reflect(vertexModule, vertex, error);
+Reflect(fragmentModule, fragment, error);
+PassReflection pass;
+if (!LinkReflection(vertex, fragment, pass, error))
+    Report(error);
+const ReflectedMember* tint = pass.blocks[0].Find("tint");   // type, byte offset and size inside the block
+```
+
+`Reflect` describes one translated module, so one variant: its uniform blocks (slot, size, every member with type, byte
+offset and size; members of nested structs as `light.color`), its textures, storage buffers and storage textures (slot,
+writable, element type and size, format), the values entering and leaving the stage (vertex attributes are the
+`Location` inputs of the vertex stage), the keywords it read and the work group size of a compute shader. Resources the
+variant does not use are not listed. A texture is sampled with the sampler bound at its slot, so samplers are not listed.
+
+`LinkReflection` joins the two stages of a pass and fails with a message naming the value when they do not fit: the
+fragment stage reads a location the vertex stage does not write, or with another type or interpolation; a slot holds
+different blocks or resources in the two stages; the vertex stage writes no position; two vertex inputs share a location.
 
 ## Compute shaders and storage buffers
 
@@ -249,6 +272,8 @@ Not written yet for Direct3D: front facing input, depth output, writing a vector
 - Compute: five kernels (a uniform and a buffer, structs between two buffers on a 2D grid, an in place update with a
   helper that loops and returns early on a 3D grid, counters shared through atomic adds, a storage texture) run on the CPU and are dispatched as GLSL 4.30 and as Direct3D
   bytecode on every adapter; the buffers must be the same byte by byte, texels within the last bit.
+- Reflection: block members with offsets (also std140 corner cases and nested structs), resources per variant, compute
+  shaders, and three pairs of stages that do not fit.
 - Variants and cache: the variants of passes with plain and shader feature keywords, wrong values and the limit; six
   variants compile four distinct shaders through the cache; a cache directory survives a restart, and a flipped byte
   or a cut off file is detected and replaced.
