@@ -96,7 +96,8 @@ namespace helix::shadercompiler
     X(Distance, "distance") X(Normalize, "normalize") X(Reflect, "reflect") X(Refract, "refract") X(Ddx, "ddx") X(Ddy, "ddy")  \
     X(Fwidth, "fwidth") X(Select, "select") X(Any, "any") X(All, "all") X(Mul, "mul") X(Transpose, "transpose")               \
     X(TextureSample, "texture.sample") X(TextureSampleLevel, "texture.samplelevel") X(TextureLoad, "texture.load")             \
-    X(TextureSize, "texture.size") X(BufferLength, "buffer.length") X(InterlockedAdd, "interlockedadd")                         \
+    X(TextureSize, "texture.size") X(TextureSampleCmp, "texture.samplecmp")                         \
+    X(TextureSampleCmpLevelZero, "texture.samplecmplevelzero") X(BufferLength, "buffer.length") X(InterlockedAdd, "interlockedadd")                         \
     X(BindlessSample, "bindless.sample") X(BindlessSampleLevel, "bindless.samplelevel") X(BindlessLoad, "bindless.load")       \
     X(BindlessStore, "bindless.store") X(BindlessSize, "bindless.size") X(AsFloat, "asfloat") X(AsUInt, "asuint")            \
     X(AsInt, "asint")
@@ -259,6 +260,8 @@ namespace helix::shadercompiler
         bool writable = false;
         // Storage textures: the texel format.
         StorageFormat format = StorageFormat::RGBA8;
+        // Textures: sampled with a comparison sampler (shadow maps).
+        bool comparison = false;
     };
 
     enum class Stage : u8

@@ -328,3 +328,34 @@ public static class Spinning
     [return: Target(0)]
     public static float4 Fragment(Varyings input) => new float4(input.color, 1.0f);
 }
+
+/// <summary>Reads a shadow map with a comparison sampler over the whole target: red where lit, green where shadowed.</summary>
+public static class ShadowReceiver
+{
+    public struct Receiver
+    {
+        public float reference;
+        public float pad0, pad1, pad2;
+    }
+
+    [Uniform(0)] public static Receiver receiver;
+    [Texture(0)] public static Texture2D<float> shadow;
+    [Sampler(0)] public static SamplerComparisonState shadowSampler;
+
+    [VertexShader]
+    public static UvVaryings Vertex([Location(0)] float2 p)
+    {
+        UvVaryings o;
+        o.position = new float4(p, 0.5f, 1.0f);
+        o.uv = new float2(p.x * 0.5f + 0.5f, 0.5f - p.y * 0.5f);
+        return o;
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment(UvVaryings input)
+    {
+        float lit = shadow.SampleCmpLevelZero(shadowSampler, input.uv, receiver.reference);
+        return new float4(lit, 1.0f - lit, 0.0f, 1.0f);
+    }
+}

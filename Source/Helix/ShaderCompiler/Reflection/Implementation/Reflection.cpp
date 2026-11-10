@@ -125,6 +125,7 @@ namespace helix::shadercompiler
             r.name = g.name;
             r.slot = g.slot;
             r.element = g.element;
+            r.comparison = g.comparison;
             if (g.kind == GlobalKind::Storage)
             {
                 bool image = g.type.base == BaseType::Image;

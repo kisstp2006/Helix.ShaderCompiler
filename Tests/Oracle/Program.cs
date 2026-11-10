@@ -14,10 +14,11 @@ namespace Helix.ShaderOracle;
 ///
 /// File layout (little endian): u32 size, u32 caseCount, u32 offset of the kernel section, then per case: u16 name length, name, size * size RGBA8 pixels
 /// (rows top first), u32 uniformCount { u32 slot, u32 byteCount, bytes }, u32 textureCount { u32 slot, u32 width,
-/// u32 height, u32 depth (layers, 6 for a cube), u32 kind (0 2D, 1 array, 2 volume, 3 cube), u32 filter, u32 address, u32 format,
+/// u32 height, u32 depth (layers, 6 for a cube), u32 kind (0 2D, 1 array, 2 volume, 3 cube), u32 filter, u32 address, u32 compare
+/// (0 for a plain sampler, else 1 + the compare function), u32 format,
 /// u32 byteCount, texels }, u32 keywordCount { u16 name length, name, i32 value }.
 /// Formats: 0 RGBA8 (float4 texels, rounded to 8 bits), 1 R32 float, 2 RG32 float, 3 R32 uint, 4 RG32 uint, 5 RGBA32 uint,
-/// 6 R32 int, 7 RG32 int, 8 RGBA32 int.
+/// 6 R32 int, 7 RG32 int, 8 RGBA32 int, 9 D32 float (float texels read with a comparison sampler).
 /// Then per case: u32 bindlessTextureCount { the same as a texture without the slot }, u32
 /// bindlessBufferCount { u32 byteCount, bytes }, in the order of their indices. Per kernel at the end: u32
 /// bindlessBufferCount { u32 byteCount, bytes before, bytes after }.
@@ -99,7 +100,9 @@ internal static class Program
         { typeof(float4), typeof(float), typeof(float2), typeof(uint), typeof(uint2), typeof(uint4), typeof(int), typeof(int2), typeof(int4) };
 
     // Any Texture2D<T>: its size, the sampler state, the format code and the texels as the GPU format holds them.
-    private static void WriteTexture(BinaryWriter w, object texture, SamplerState sampler)
+    private static void WriteTexture(BinaryWriter w, object texture, SamplerState sampler) => WriteTexture(w, texture, sampler.Filter, sampler.Address, 0);
+
+    private static void WriteTexture(BinaryWriter w, object texture, SamplerFilter filter, SamplerAddress address, int compare)
     {
         Type type = texture.GetType();
         object size = type.GetProperty("Size")!.GetValue(texture)!;
@@ -115,9 +118,10 @@ internal static class Program
         w.Write((uint)dims.y);
         w.Write((uint)dims.z);
         w.Write((uint)kind);
-        w.Write((uint)sampler.Filter);
-        w.Write((uint)sampler.Address);
-        w.Write((uint)format);
+        w.Write((uint)filter);
+        w.Write((uint)address);
+        w.Write((uint)compare);
+        w.Write((uint)(compare != 0 ? 9 : format));
         if (format == 0)
         {
             w.Write((uint)texels.Length * 4u);
@@ -275,9 +279,12 @@ internal static class Program
                 int slot = f.GetCustomAttribute<TextureAttribute>()!.Slot;
                 object texture = f.GetValue(null)!;
                 FieldInfo? samplerField = fields.FirstOrDefault(s => s.GetCustomAttribute<SamplerAttribute>()?.Slot == slot);
-                SamplerState sampler = samplerField != null ? (SamplerState)samplerField.GetValue(null)! : default;
+                object? sampler = samplerField?.GetValue(null);
                 w.Write((uint)slot);
-                WriteTexture(w, texture, sampler);
+                if (sampler is SamplerComparisonState comparison)
+                    WriteTexture(w, texture, comparison.Filter, comparison.Address, 1 + (int)comparison.Compare);
+                else
+                    WriteTexture(w, texture, sampler is SamplerState plain ? plain : default);
             }
 
             w.Write((uint)keywords.Length);

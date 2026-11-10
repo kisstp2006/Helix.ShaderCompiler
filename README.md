@@ -270,7 +270,8 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
 - Vector components and matrix columns by index (`v[i]`, `m[i]`), also written at computed positions.
 - `if`, `for`, `while`, `do`, `switch`, `break`, `continue`, early `return`, `?:`, `&&`, `||`.
 - The functions of `ShaderMath`, `Texture2D<T>`, `Texture2DArray<T>`, `Texture3D<T>` and `TextureCube<T>` with float, int or uint
-  texels (`Sample` and `SampleLevel` for float texels, `Load` except on cubes, `Size`), and uniform structs, textures and samplers
+  texels (`Sample` and `SampleLevel` for float texels, `Load` except on cubes, `Size`), `SampleCmp` and `SampleCmpLevelZero` of 2D,
+  array and cube shadow maps with a `SamplerComparisonState`, and uniform structs, textures and samplers
   declared as static fields.
 - `double` is computed as `float`.
 
@@ -287,7 +288,7 @@ Dynamic keywords (decided at run time) are not available yet.
 | fragment output `[Target(n)]` | `layout(location = n) out ... hx_target<n>` |
 | `[Position]` | `gl_Position` in the vertex stage, `gl_FragCoord` in the fragment stage |
 | `[Uniform(slot)] static T name` | `layout(std140) uniform hx_block_name { T g_name; }` |
-| `[Texture(slot)] static Texture2D<T> name` | `uniform sampler2D g_name` (`isampler2D`, `usampler2D` for integer texels); the sampler state travels with the slot |
+| `[Texture(slot)] static Texture2D<T> name` | `uniform sampler2D g_name` (`isampler2D`, `usampler2D` for integer texels, `sampler2DShadow` when read with a comparison sampler); the sampler state travels with the slot |
 
 ## Conventions of the generated Direct3D bytecode
 
@@ -319,6 +320,7 @@ cannot be indexed.
 - Compute: five kernels (a uniform and a buffer, structs between two buffers on a 2D grid, an in place update with a
   helper that loops and returns early on a 3D grid, counters shared through atomic adds, a storage texture) run on the CPU and are dispatched as GLSL 4.30 and as Direct3D
   bytecode on every adapter; the buffers must be the same byte by byte, texels within the last bit.
+- Shadow maps: comparison sampling of a filtered 2D map, a layer of an array and a cube face, on D32 float textures.
 - Texture kinds: an eight layer array (sampled and loaded), a volume filtered in three dimensions, a cube read at texel centers
   of all six faces, and an integer array.
 - Typed textures: float, float2, uint, uint2, int and int4 textures, sampled or loaded, in 32 bit formats on the GPU.

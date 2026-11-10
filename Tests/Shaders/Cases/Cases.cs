@@ -727,3 +727,48 @@ public static class TextureKinds
         return new float4(a.x * 0.5f + b.y * 0.5f, c.y * 0.5f + d.z * 0.5f, d.x * 0.5f + code / 255.0f * 0.5f, sizes);
     }
 }
+
+/// <summary>Shadow maps: comparison sampling of a 2D map (filtered), a layer of an array and a face of a cube.</summary>
+public static class ShadowMaps
+{
+    [Texture(0)] public static Texture2D<float> sun;
+    [Sampler(0)] public static SamplerComparisonState sunSampler;
+    [Texture(1)] public static Texture2DArray<float> cascades;
+    [Sampler(1)] public static SamplerComparisonState cascadeSampler;
+    [Texture(2)] public static TextureCube<float> lamp;
+    [Sampler(2)] public static SamplerComparisonState lampSampler;
+
+    public static void Setup()
+    {
+        float[] sunDepths = new float[16];
+        for (int i = 0; i < 16; i++)
+            sunDepths[i] = (i * 7 % 16) / 17.0f + 0.013f;
+        sun = Texture2D<float>.FromTexels(sunDepths, 4, 4);
+        sunSampler = new SamplerComparisonState { Filter = SamplerFilter.Linear, Address = SamplerAddress.Clamp, Compare = CompareFunction.LessEqual };
+        float[] cascadeDepths = new float[2 * 2 * 3];
+        for (int i = 0; i < cascadeDepths.Length; i++)
+            cascadeDepths[i] = (i * 5 % 12) / 13.0f + 0.021f;
+        cascades = Texture2DArray<float>.FromTexels(cascadeDepths, 2, 2, 3);
+        cascadeSampler = new SamplerComparisonState { Filter = SamplerFilter.Nearest, Address = SamplerAddress.Clamp, Compare = CompareFunction.Greater };
+        float[] lampDepths = new float[2 * 2 * 6];
+        for (int i = 0; i < lampDepths.Length; i++)
+            lampDepths[i] = (i * 11 % 24) / 25.0f + 0.017f;
+        lamp = TextureCube<float>.FromTexels(lampDepths, 2);
+        lampSampler = new SamplerComparisonState { Filter = SamplerFilter.Nearest, Address = SamplerAddress.Clamp, Compare = CompareFunction.Less };
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        int x = (int)(uv.x * 16.0f), y = (int)(uv.y * 16.0f);
+        float reference = (x * 13 + y * 7) % 32 / 33.0f + 0.004f;
+        float a = sun.SampleCmp(sunSampler, uv, reference);
+        float b = cascades.SampleCmpLevelZero(cascadeSampler, new float3((x % 2 + 0.5f) / 2.0f, (y % 2 + 0.5f) / 2.0f, (float)(x % 3)), reference);
+        // The center of a texel of one face: the major axis is 1 and the others are at +-0.5.
+        float s = x % 2 == 0 ? -0.5f : 0.5f, t = y % 2 == 0 ? -0.5f : 0.5f;
+        float3 direction = (x + y) % 3 == 0 ? new float3(1.0f, s, t) : (x + y) % 3 == 1 ? new float3(s, -1.0f, t) : new float3(s, t, 1.0f);
+        float c = lamp.SampleCmp(lampSampler, direction, reference);
+        return new float4(a, b, c, 1.0f);
+    }
+}

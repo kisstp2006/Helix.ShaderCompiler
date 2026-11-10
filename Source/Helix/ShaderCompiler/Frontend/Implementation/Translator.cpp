@@ -39,7 +39,7 @@ namespace helix::shadercompiler
                 out = Type::Scalar(BaseType::Image);
                 return true;
             }
-            if (name == "SamplerState")
+            if (name == "SamplerState" || name == "SamplerComparisonState")
             {
                 out = Type::Scalar(BaseType::Sampler);
                 return true;
@@ -664,6 +664,18 @@ namespace helix::shadercompiler
                     e.args.Push(Coerce(mt, args[2].e, Type::Vector(BaseType::Float, coordinates)));
                     if (args.Size() > 3)
                         e.args.Push(Coerce(mt, args[3].e, kFloat));
+                }
+                else if ((member == "SampleCmp" || member == "SampleCmpLevelZero") && args.Size() == 4)
+                {
+                    // The sampler of the slot compares; the texture is a shadow map of single floats.
+                    if (element != kFloat || kind == BaseType::Texture3D)
+                        return Fail(mt.name, Format("{} must hold single floats in 2D, array or cube form to be sampled with a comparison",
+                                                    m.globals[self.index].name));
+                    m.globals[self.index].comparison = true;
+                    e.intrinsic = member == "SampleCmp" ? Intrinsic::TextureSampleCmp : Intrinsic::TextureSampleCmpLevelZero;
+                    e.type = kFloat;
+                    e.args.Push(Coerce(mt, args[2].e, Type::Vector(BaseType::Float, coordinates)));
+                    e.args.Push(Coerce(mt, args[3].e, kFloat));
                 }
                 else if (member == "Load" && args.Size() == 3 && kind != BaseType::TextureCube)
                 {

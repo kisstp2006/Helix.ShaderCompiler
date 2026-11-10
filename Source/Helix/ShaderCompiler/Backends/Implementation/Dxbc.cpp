@@ -17,7 +17,7 @@ namespace helix::shadercompiler
             kFtou = 28, kGe = 29, kIadd = 30, kIf = 31, kIeq = 32, kIge = 33, kIlt = 34, kImax = 36, kImin = 37, kImul = 38,
             kIne = 39, kIneg = 40, kIshl = 41, kIshr = 42, kItof = 43, kLd = 45, kLog = 47, kLoop = 48, kLt = 49, kMad = 50,
             kMin = 51, kMax = 52, kMov = 54, kMovc = 55, kMul = 56, kNe = 57, kNot = 59, kOr = 60, kResinfo = 61, kRet = 62,
-            kRoundNe = 64, kRoundNi = 65, kRoundPi = 66, kRoundZ = 67, kRsq = 68, kSample = 69, kSampleL = 72, kSqrt = 75,
+            kRoundNe = 64, kRoundNi = 65, kRoundPi = 66, kRoundZ = 67, kRsq = 68, kSample = 69, kSampleL = 72, kSampleC = 70, kSampleCLz = 71, kSqrt = 75,
             kSincos = 77, kUdiv = 78, kUlt = 79, kUge = 80, kUmax = 83, kUmin = 84, kUshr = 85, kUtof = 86, kXor = 87,
             kDclResource = 88, kDclConstantBuffer = 89, kDclSampler = 90, kDclInput = 95, kDclInputSgv = 96, kDclInputPs = 98,
             kDclInputPsSgv = 99, kDclInputPsSiv = 100, kDclOutput = 101, kDclOutputSiv = 103, kDclTemps = 104,
@@ -1185,6 +1185,24 @@ namespace helix::shadercompiler
                     Finish(ins);
                     return result(d);
                 }
+                case Intrinsic::TextureSampleCmp: case Intrinsic::TextureSampleCmpLevelZero:
+                {
+                    // Only fragment shaders have the derivatives an implicit level needs.
+                    u32 slot = arg(0).imm[0];
+                    UseTexture(slot);
+                    bool implicit = e.intrinsic == Intrinsic::TextureSampleCmp && m.stage == Stage::Fragment;
+                    Src d = NewTemp(1);
+                    Instruction ins(implicit ? kSampleC : kSampleCLz);
+                    PutDst(ins, Whole(d));
+                    PutSrc(ins, arg(1));
+                    ins.words.Push(0x00107E46u);
+                    ins.words.Push(slot);
+                    ins.words.Push(0x00106000u);
+                    ins.words.Push(slot);
+                    PutSrc(ins, arg(2), 0);
+                    Finish(ins);
+                    return result(d);
+                }
                 case Intrinsic::TextureSize:
                 {
                     u32 slot = arg(0).imm[0];
@@ -1921,14 +1939,16 @@ namespace helix::shadercompiler
                 {
                     // The return type of every component (5 float, 3 signed, 4 unsigned integer) and the dimension (3 2D,
                     // 8 2D array, 5 volume, 6 cube).
-                    u32 kind = 5, dimension = 3;
+                    u32 kind = 5, dimension = 3, mode = 0;
                     for (const Global& g : m.globals)
                         if (g.kind == GlobalKind::Texture && g.slot == slot)
                         {
+                            mode = g.comparison ? 1u : 0u;
                             kind = g.element.base == BaseType::Int ? 3u : g.element.base == BaseType::UInt ? 4u : 5u;
                             dimension = g.type.base == BaseType::Texture2DArray ? 8u : g.type.base == BaseType::Texture3D ? 5u : g.type.base == BaseType::TextureCube ? 6u : 3u;
                         }
-                    u32 words[] = {kDclSampler | (3u << 24), 0x00106000u, slot, kDclResource | (dimension << 11) | (4u << 24), 0x00107000u, slot, kind * 0x1111u};
+                    u32 words[] = {kDclSampler | (mode << 11) | (3u << 24), 0x00106000u, slot, kDclResource | (dimension << 11) | (4u << 24), 0x00107000u, slot,
+                                   kind * 0x1111u};
                     body.Append(words, 7);
                 }
                 if (bindless.textures)

@@ -60,8 +60,9 @@ namespace
     {
         static constexpr rhi::Format kFormats[] = {rhi::Format::RGBA8Unorm, rhi::Format::R32Float,  rhi::Format::RG32Float,
                                                    rhi::Format::R32Uint,    rhi::Format::RG32Uint,  rhi::Format::RGBA32Uint,
-                                                   rhi::Format::R32Sint,    rhi::Format::RG32Sint,  rhi::Format::RGBA32Sint};
-        return code < 9 ? kFormats[code] : rhi::Format::Unknown;
+                                                   rhi::Format::R32Sint,    rhi::Format::RG32Sint,  rhi::Format::RGBA32Sint,
+                                                   rhi::Format::D32Float};
+        return code < 10 ? kFormats[code] : rhi::Format::Unknown;
     }
 
     ShaderHandle MakeShader(Device& device, const DxbcShader& shader, ShaderStage stage)
@@ -169,7 +170,7 @@ void RunCases(Device& d, bool direct3d)
         for (u32 t = 0; t < textureCount; t++)
         {
             u32 slot = r.U32(), width = r.U32(), height = r.U32(), depth = r.U32(), kind = r.U32(), filter = r.U32(), address = r.U32();
-            u32 format = r.U32(), bytes = r.U32();
+            u32 compare = r.U32(), format = r.U32(), bytes = r.U32();
             const u8* texels = r.Bytes(bytes);
             HX_REQUIRE(texels != nullptr && TestFormat(format) != rhi::Format::Unknown && kind < 4);
             const TextureType kTypes[] = {TextureType::Texture2D, TextureType::Texture2DArray, TextureType::Texture3D, TextureType::TextureCube};
@@ -178,7 +179,8 @@ void RunCases(Device& d, bool direct3d)
             HX_REQUIRE(textures.Back().IsValid());
             Filter f = filter == 1 ? Filter::Linear : Filter::Nearest;
             AddressMode mode = address == 1 ? AddressMode::ClampToEdge : AddressMode::Repeat;
-            samplers.Push(d.CreateSampler({.minFilter = f, .magFilter = f, .mipFilter = Filter::Nearest, .addressU = mode, .addressV = mode, .addressW = mode}));
+            samplers.Push(d.CreateSampler({.minFilter = f, .magFilter = f, .mipFilter = Filter::Nearest, .addressU = mode, .addressV = mode, .addressW = mode,
+                                           .compare = compare != 0, .compareFunction = CompareFunction(compare ? compare - 1 : 0)}));
             bind.SetTexture(slot, textures.Back(), samplers.Back());
         }
 
@@ -212,9 +214,9 @@ void RunCases(Device& d, bool direct3d)
         for (u32 t = 0; t < bindlessTextureCount; t++)
         {
             u32 width = r.U32(), height = r.U32(), depth = r.U32(), kind = r.U32(), filter = r.U32(), address = r.U32();
-            u32 format = r.U32(), bytes = r.U32();
+            u32 compare = r.U32(), format = r.U32(), bytes = r.U32();
             const u8* pixels = r.Bytes(bytes);
-            HX_REQUIRE(pixels != nullptr && format == 0 && kind == 0 && depth == 1);
+            HX_REQUIRE(pixels != nullptr && format == 0 && kind == 0 && depth == 1 && compare == 0);
             skip = skip || !d.Caps().bindlessTextures;
             if (skip)
                 continue;

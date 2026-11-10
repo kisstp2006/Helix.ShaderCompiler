@@ -48,6 +48,8 @@ namespace helix::shadercompiler
         Type element;
         u32 stride = 0;
         StorageFormat format = StorageFormat::RGBA8;
+        // A texture read with a comparison sampler; its slot needs one.
+        bool comparison = false;
     };
 
     // A value entering or leaving the stage.

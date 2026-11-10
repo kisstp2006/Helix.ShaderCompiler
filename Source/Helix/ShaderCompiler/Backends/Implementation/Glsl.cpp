@@ -216,6 +216,28 @@ namespace helix::shadercompiler
                     out.Append(kComponents[(e.type.rows - 1) & 3]);
                     return true;
                 }
+                case Intrinsic::TextureSampleCmp:
+                case Intrinsic::TextureSampleCmpLevelZero:
+                {
+                    // The reference value goes after the coordinates; level zero is a zero gradient where no textureLod exists.
+                    Type coord = fn->exprs[e.args[1]].type;
+                    bool zero = e.intrinsic == Intrinsic::TextureSampleCmpLevelZero;
+                    bool lod = zero && coord.rows == 2;
+                    out.Append(!zero ? "texture(" : lod ? "textureLod(" : "textureGrad(");
+                    Value(e.args[0]);
+                    FormatAppend(out, ", vec{}(", coord.rows + 1u);
+                    Value(e.args[1]);
+                    out.Append(", ");
+                    Value(e.args[2]);
+                    out.Append(')');
+                    if (lod)
+                        out.Append(", 0.0");
+                    else if (zero)
+                        FormatAppend(out, ", vec{}(0.0), vec{}(0.0)", coord.rows == 3 && fn->exprs[e.args[0]].type.base == BaseType::TextureCube ? 3u : 2u,
+                                     coord.rows == 3 && fn->exprs[e.args[0]].type.base == BaseType::TextureCube ? 3u : 2u);
+                    out.Append(')');
+                    return true;
+                }
                 case Intrinsic::TextureSize:
                     out.Append("textureSize(");
                     Value(e.args[0]);
@@ -687,8 +709,8 @@ namespace helix::shadercompiler
                                             : g.type.base == BaseType::TextureCube ? "Cube"
                                                                                   : "2D";
                         bool es = target == GlslTarget::Essl300 || target == GlslTarget::Essl310;
-                        bool defaulted = g.element.base == BaseType::Float && (g.type.base == BaseType::Texture2D || g.type.base == BaseType::TextureCube);
-                        FormatAppend(out, "uniform {}{}sampler{} g_{};\n", es && !defaulted ? "highp " : "", prefix, shape, g.name);
+                        bool defaulted = !g.comparison && g.element.base == BaseType::Float && (g.type.base == BaseType::Texture2D || g.type.base == BaseType::TextureCube);
+                        FormatAppend(out, "uniform {}{}sampler{}{} g_{};\n", es && !defaulted ? "highp " : "", prefix, shape, g.comparison ? "Shadow" : "", g.name);
                         shader.bindings.Push({Format("g_{}", g.name), GlobalKind::Texture, g.slot});
                     }
                 }
