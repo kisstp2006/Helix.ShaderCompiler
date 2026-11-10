@@ -1107,6 +1107,8 @@ namespace helix::shadercompiler
                     // Matrices are stored by column: M * v is the sum of the columns scaled by the components of v.
                     const Value& matrix = args[0];
                     u32 size = matrix.type.cols;
+                    if (!matrix.type.IsMatrix() || matrix.parts.Size() < size || args[1].type.rows != size)
+                        return Fail("a matrix product of operands that do not fit");
                     auto transform = [&](const Src& v) {
                         Src acc = Emit(kMul, size, matrix.parts[0], Pick(v, 0));
                         for (u32 c = 1; c < size; c++)

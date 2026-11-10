@@ -130,6 +130,13 @@ namespace helix::shadercompiler
                         if (t.IsVoid() || t.base == BaseType::Struct)
                             return Fail(Format("an argument of {} that is not a value it takes", IntrinsicName(e.intrinsic)));
                     }
+                    if (e.intrinsic == Intrinsic::Mul)
+                    {
+                        // A matrix times a vector or matrix with as many rows as the matrix has columns.
+                        Type matrix = f->exprs[e.args[0]].type, v = f->exprs[e.args[1]].type;
+                        if (!matrix.IsMatrix() || v.rows != matrix.cols)
+                            return Fail("a matrix product of operands that do not fit");
+                    }
                     break;
                 default: break;
                 }
