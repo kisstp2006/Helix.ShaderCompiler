@@ -3,6 +3,7 @@
 #include <Helix/ShaderCompiler/Assembly/Assembly.h>
 #include <Helix/ShaderCompiler/Assembly/DebugInfo.h>
 #include <Helix/ShaderCompiler/IR/IR.h>
+#include <Helix/ShaderCompiler/Transforms/Passes.h>
 
 namespace helix::shadercompiler
 {
@@ -24,6 +25,8 @@ namespace helix::shadercompiler
         // Debug information of the shader assembly and of the references, matched to them by their PDB id. Errors then
         // start with the file and line of the C# source: "Shaders/Lit.cs:42: Fragment: ...".
         Span<const DebugInfo* const> symbols;
+        // Verification and dumps of the optimization passes that run on the translated module.
+        PassOptions passes;
     };
 
     // Translates a shader entry point (a static C# method) and every method it calls into a module.

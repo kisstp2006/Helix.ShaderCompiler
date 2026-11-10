@@ -25,8 +25,5 @@ namespace helix::shadercompiler
     bool StructureFlow(Array<FlowBlock>& blocks, Function& function, Array<Stmt>& out, String& error);
 
     // Helpers shared by the translation steps.
-    ExprId AddExpr(Function& function, Expr&& expr);
-    ExprId MakeUnary(Function& function, Op op, ExprId a, Type type);
-    ExprId MakeBinary(Function& function, Op op, ExprId a, ExprId b, Type type);
     ExprId MakeNot(Function& function, ExprId condition);
 }

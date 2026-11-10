@@ -60,4 +60,33 @@ namespace helix::shadercompiler
                 return Intrinsic(i);
         return Intrinsic::Count;
     }
+
+    ExprId AddExpr(Function& function, Expr&& expr)
+    {
+        if (function.exprs.Empty())
+            function.exprs.Emplace();
+        function.exprs.Push(Move(expr));
+        return ExprId(function.exprs.Size() - 1);
+    }
+
+    ExprId MakeUnary(Function& function, Op op, ExprId a, Type type)
+    {
+        Expr e;
+        e.kind = ExprKind::Unary;
+        e.op = op;
+        e.a = a;
+        e.type = type;
+        return AddExpr(function, Move(e));
+    }
+
+    ExprId MakeBinary(Function& function, Op op, ExprId a, ExprId b, Type type)
+    {
+        Expr e;
+        e.kind = ExprKind::Binary;
+        e.op = op;
+        e.a = a;
+        e.b = b;
+        e.type = type;
+        return AddExpr(function, Move(e));
+    }
 }

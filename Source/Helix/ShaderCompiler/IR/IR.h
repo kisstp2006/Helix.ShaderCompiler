@@ -322,4 +322,9 @@ namespace helix::shadercompiler
         // Keywords that decide this code; a variant differs from another only when one of these differs.
         Array<KeywordUse> keywords;
     };
+
+    // Appends an expression to the arena of the function (creating the null expression 0 first) and returns its id.
+    ExprId AddExpr(Function& function, Expr&& expr);
+    ExprId MakeUnary(Function& function, Op op, ExprId a, Type type);
+    ExprId MakeBinary(Function& function, Op op, ExprId a, ExprId b, Type type);
 }

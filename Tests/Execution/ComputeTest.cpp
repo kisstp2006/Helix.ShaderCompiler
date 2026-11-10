@@ -187,6 +187,7 @@ namespace
             HX_REQUIRE(type != 0);
             TranslateOptions options;
             options.keywords = Span<const KeywordValue>(keywords.Data(), keywords.Size());
+            options.passes.verify = true;
             // Through the cache, as the renderer compiles them; variants with the same code share an entry.
             bool ok = TranslateEntryPoint(a, a.FindMethod(type, "Run"), Stage::Compute, module, error, options) &&
                       CompileModule(module, direct3d ? ShaderTarget::Dxbc : ShaderTarget::Glsl430, compiled, error, &cache);

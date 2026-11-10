@@ -1,5 +1,4 @@
 #include <Helix/ShaderCompiler/Frontend/Implementation/Translator.h>
-#include <Helix/ShaderCompiler/Transforms/Simplify.h>
 
 namespace helix::shadercompiler
 {
@@ -72,7 +71,12 @@ namespace helix::shadercompiler
                 error = Format("{}{}: uniform {} is on slot {}, which holds the dynamic keywords", t.At(0, method, 0), info.name, g.name, kKeywordBlockSlot);
                 return false;
             }
-        Simplify(out);
+        String passError;
+        if (!RunPasses(out, passError, options.passes))
+        {
+            error = Format("{}{}: {}", t.At(0, method, 0), info.name, passError);
+            return false;
+        }
         return true;
     }
 }

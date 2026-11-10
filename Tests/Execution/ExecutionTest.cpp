@@ -206,6 +206,8 @@ void RunCases(Device& d, bool direct3d)
         TranslateOptions options;
         options.keywords = Span<const KeywordValue>(keywords.Data(), keywords.Size());
         options.references = Span<const Assembly* const>(references, 2);
+        // Every module is verified after every pass, also in release builds.
+        options.passes.verify = true;
 
         // Bindless resources, registered in the order of their CPU indices; on a fresh table the indices match.
         Array<TextureHandle> bindlessTextures;
