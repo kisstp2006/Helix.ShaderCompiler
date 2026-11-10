@@ -24,7 +24,8 @@ namespace Helix.ShaderOracle;
 /// bindlessBufferCount { u32 byteCount, bytes before, bytes after }.
 /// A case with [Keyword] fields is written once per combination of their values.
 ///
-/// Kernel section, the compute tests of Helix.ShaderTests.Kernels: u32 kernelCount, then per kernel: u16 name length, name,
+/// Kernel section, the compute tests of Helix.ShaderTests.Kernels: u32 kernelCount, then per kernel (once per combination of
+/// its keywords): u16 name length, name, u32 keywordCount { u16 name length, name, i32 value },
 /// 3 x u32 work group counts, u32 uniformCount { u32 slot, u32 byteCount, bytes }, u32 bufferCount { u32 slot, u32 writable,
 /// u32 stride, u32 byteCount, bytes before, bytes after (writable buffers only) }, u32 storageTextureCount { u32 slot,
 /// u32 width, u32 height, u32 format (the storage format: 1 RGBA8, 2 RGBA16F, 3 RGBA32F, 4 R32F, 5 R32UI, 6 R32I), u32 byteCount,
@@ -183,22 +184,34 @@ internal static class Program
 
     private static int WriteKernels(BinaryWriter w, Assembly shaders)
     {
-        List<(Type type, MethodInfo run)> kernels = shaders.GetTypes()
+        List<(Type type, MethodInfo run)> types = shaders.GetTypes()
             .Where(t => t.Namespace == "Helix.ShaderTests.Kernels")
             .Select(t => (t, t.GetMethod("Run", BindingFlags.Public | BindingFlags.Static)))
             .Where(k => k.Item2 != null && k.Item2.GetCustomAttribute<ComputeShaderAttribute>() != null)
             .OrderBy(k => k.t.Name, StringComparer.Ordinal)
             .Select(k => (k.t, k.Item2!))
             .ToList();
+        List<(Type type, MethodInfo run, (FieldInfo field, int value)[] keywords)> kernels =
+            types.SelectMany(k => Variants(k.type).Select(v => (k.type, k.run, v))).ToList();
         w.Write((uint)kernels.Count);
-        foreach ((Type type, MethodInfo run) in kernels)
+        foreach ((Type type, MethodInfo run, (FieldInfo field, int value)[] keywords) in kernels)
         {
             Bindless.Clear();
             type.GetMethod("Setup", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+            foreach ((FieldInfo field, int value) in keywords)
+                field.SetValue(null, field.FieldType.IsEnum ? Enum.ToObject(field.FieldType, value) : value != 0);
             List<byte[]> bindlessBefore = Enumerable.Range(0, Bindless.BufferCount).Select(i => ArrayBytes(Bindless.Buffer((uint)i))).ToList();
             byte[] name = System.Text.Encoding.ASCII.GetBytes(type.Name);
             w.Write((ushort)name.Length);
             w.Write(name);
+            w.Write((uint)keywords.Length);
+            foreach ((FieldInfo field, int value) in keywords)
+            {
+                byte[] keyword = System.Text.Encoding.ASCII.GetBytes(field.Name);
+                w.Write((ushort)keyword.Length);
+                w.Write(keyword);
+                w.Write(value);
+            }
             int3 groups = (int3)type.GetField("Groups", BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
             w.Write((uint)groups.x);
             w.Write((uint)groups.y);

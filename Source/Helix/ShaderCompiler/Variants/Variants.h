@@ -35,4 +35,9 @@ namespace helix::shadercompiler
     // not declare, or when there would be more than `limit` variants.
     bool EnumerateVariants(const Assembly& assembly, const ShaderDescription& shader, const ShaderPass& pass, Span<const KeywordSelection> used,
                            VariantSet& out, String& error, u32 limit = 4096);
+
+    // The variants of one kernel of a compute shader, by the same rules: the keywords its code reads, with the values of
+    // the compute definition's declarations.
+    bool EnumerateKernelVariants(const ComputeDescription& compute, const ComputeKernel& kernel, Span<const KeywordSelection> used, VariantSet& out,
+                                 String& error, u32 limit = 4096);
 }

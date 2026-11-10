@@ -96,7 +96,9 @@ the pass, matched without case in the first SubShader that has it. `ShaderPass::
 A class derived from `ComputeDefinition` with `[ComputeDefinition(name)]` is a compute shader. `ReadComputeDefinitions`
 lists its keywords and kernels (the `[ComputeShader(x, y, z)]` methods in source order, with their thread group sizes);
 `FindKernel(name)` gives the kernel index as the reference engine does. A definition without kernels, two kernels with
-one name and instance fields (compute shaders have no material properties) are errors.
+one name and instance fields (compute shaders have no material properties) are errors. `EnumerateKernelVariants` lists
+the variants of a kernel by the rules of `EnumerateVariants`, and `CompileModule` compiles them for GLSL 4.30, GLSL ES 3.10
+and Direct3D through the same cache.
 
 ## Variants and the cache
 
@@ -377,6 +379,8 @@ cannot be indexed.
   targets are unchanged; half in a uniform block and in a vertex input is rejected.
 - Local functions: a static one, ones that capture a parameter and locals (changed after the capture), one that
   counts its calls in a captured local, and a nested one with a ref parameter.
+- Kernel variants: a kernel with a bool and an enum keyword runs once per combination, compiled through the cache; the
+  variants of the kernels of a compute definition for the three compute targets.
 - Dynamic keywords: a bool and an enum read from the keyword block next to a plain keyword, every combination; the
   block layout in reflection and GLSL; a user uniform on the keyword slot is rejected.
 - Debug information: lines from the PDB next to the test shaders and from the one embedded in Tests/Includes, damaged

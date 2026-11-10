@@ -4,6 +4,7 @@
 #include <Helix/RHI/Device/Device.h>
 #include <Helix/ShaderCompiler/Backends/Dxbc.h>
 #include <Helix/ShaderCompiler/Backends/Glsl.h>
+#include <Helix/ShaderCompiler/Cache/ShaderCache.h>
 #include <Helix/ShaderCompiler/Frontend/Frontend.h>
 #include <Helix/Testing/Test.h>
 
@@ -59,6 +60,7 @@ namespace
         HX_REQUIRE(kernelCount >= 3);
         u32 passed = 0;
         u32 skipped = 0;
+        ShaderCache cache;
         for (u32 k = 0; k < kernelCount; k++)
         {
             u32 nameLength = 0;
@@ -67,6 +69,24 @@ namespace
             const u8* nameBytes = r.Bytes(nameLength);
             HX_REQUIRE(nameBytes != nullptr);
             String name(StringView(reinterpret_cast<const char*>(nameBytes), nameLength));
+            // Keyword values of this run; the label names them.
+            Array<String> keywordNames;
+            Array<KeywordValue> keywords;
+            String label = name;
+            u32 keywordCount = r.U32();
+            for (u32 i = 0; i < keywordCount; i++)
+            {
+                u32 length = 0;
+                if (const u8* p = r.Bytes(2))
+                    length = u32(p[0]) | (u32(p[1]) << 8);
+                const u8* text = r.Bytes(length);
+                HX_REQUIRE(text != nullptr);
+                keywordNames.Push(String(StringView(reinterpret_cast<const char*>(text), length)));
+                keywords.Push({StringView(), i64(i32(r.U32()))});
+                label = helix::Format("{} {}={}", label, keywordNames.Back(), keywords.Back().value);
+            }
+            for (usize i = 0; i < keywords.Size(); i++)
+                keywords[i].name = keywordNames[i];
             u32 groups[3] = {r.U32(), r.U32(), r.U32()};
 
             CommandList cl;
@@ -151,7 +171,7 @@ namespace
             }
             if (skip)
             {
-                std::printf("    %s: no bindless buffers on %s, skipped\n", name.CStr(), d.Caps().renderer);
+                std::printf("    %s: no bindless buffers on %s, skipped\n", label.CStr(), d.Caps().renderer);
                 for (const Bound& b : buffers)
                     d.Destroy(b.buffer);
                 for (const Image& image : images)
@@ -161,15 +181,17 @@ namespace
             }
 
             Module module;
-            GlslShader glsl;
-            DxbcShader dxbc;
+            CompiledShader compiled;
             String error;
             u32 type = a.FindType("Helix.ShaderTests.Kernels", name);
             HX_REQUIRE(type != 0);
-            bool ok = TranslateEntryPoint(a, a.FindMethod(type, "Run"), Stage::Compute, module, error) &&
-                      (direct3d ? EmitDxbc(module, dxbc, error) : EmitGlsl(module, GlslTarget::Glsl430, glsl, error));
+            TranslateOptions options;
+            options.keywords = Span<const KeywordValue>(keywords.Data(), keywords.Size());
+            // Through the cache, as the renderer compiles them; variants with the same code share an entry.
+            bool ok = TranslateEntryPoint(a, a.FindMethod(type, "Run"), Stage::Compute, module, error, options) &&
+                      CompileModule(module, direct3d ? ShaderTarget::Dxbc : ShaderTarget::Glsl430, compiled, error, &cache);
             if (!ok)
-                std::printf("    %s: %s\n", name.CStr(), error.CStr());
+                std::printf("    %s: %s\n", label.CStr(), error.CStr());
             // HELIX_PRINT_SHADERS=<kernel name> shows the GLSL or writes the bytecode to <kernel name>.dxbc.
             const char* print = std::getenv("HELIX_PRINT_SHADERS");
             if (ok && print && name == StringView(print))
@@ -178,31 +200,31 @@ namespace
                 std::FILE* f = direct3d ? std::fopen(path.CStr(), "wb") : nullptr;
                 if (f)
                 {
-                    std::fwrite(dxbc.bytes.Data(), 1, dxbc.bytes.Size(), f);
+                    std::fwrite(compiled.code.Data(), 1, compiled.code.Size(), f);
                     std::fclose(f);
                 }
                 if (!direct3d)
-                    std::printf("%s\n", glsl.source.CStr());
+                    std::printf("%s\n", String(compiled.Text()).CStr());
             }
             ShaderHandle shader;
             PipelineHandle pipeline;
             if (ok)
             {
                 Array<ShaderBinding> bindings;
-                for (const GlslBinding& b : glsl.bindings)
+                for (const GlslBinding& b : compiled.bindings)
                     bindings.Push({b.name, b.kind == GlobalKind::Uniform ? BindingKind::UniformBuffer : BindingKind::Texture, b.slot});
                 ShaderDesc desc;
                 desc.stage = ShaderStage::Compute;
-                desc.source = glsl.source;
-                desc.bytecode = direct3d ? dxbc.bytes.Data() : nullptr;
-                desc.bytecodeSize = direct3d ? dxbc.bytes.Size() : 0;
+                desc.source = direct3d ? StringView() : compiled.Text();
+                desc.bytecode = direct3d ? compiled.code.Data() : nullptr;
+                desc.bytecodeSize = direct3d ? compiled.code.Size() : 0;
                 desc.bindings = bindings.Data();
                 desc.bindingCount = u32(bindings.Size());
                 shader = d.CreateShader(desc);
                 pipeline = shader.IsValid() ? d.CreateComputePipeline({shader, "kernel"}) : PipelineHandle{};
                 ok = pipeline.IsValid();
                 if (!ok)
-                    std::printf("    %s: the generated shader was rejected by the driver:\n%s\n", name.CStr(), direct3d ? "" : glsl.source.CStr());
+                    std::printf("    %s: the generated shader was rejected by the driver:\n%s\n", label.CStr(), direct3d ? "" : String(compiled.Text()).CStr());
             }
             if (ok)
             {
@@ -233,7 +255,7 @@ namespace
                         wrong = 1;
                     if (wrong)
                     {
-                        std::printf("    %s (%s): texture in slot %u has %u wrong bytes, the first at byte %u: GPU %u, CPU %u\n", name.CStr(),
+                        std::printf("    %s (%s): texture in slot %u has %u wrong bytes, the first at byte %u: GPU %u, CPU %u\n", label.CStr(),
                                     direct3d ? "DXBC" : "GLSL 430", image.slot, wrong, first, u32(pixels[first]), u32(image.expected[first]));
                         ok = false;
                     }
@@ -253,7 +275,7 @@ namespace
                         wrong = 1;
                     if (wrong)
                     {
-                        std::printf("    %s (%s): bindless buffer %u has %u wrong bytes, the first at byte %u: GPU %u, CPU %u\n", name.CStr(),
+                        std::printf("    %s (%s): bindless buffer %u has %u wrong bytes, the first at byte %u: GPU %u, CPU %u\n", label.CStr(),
                                     direct3d ? "DXBC" : "GLSL 430", h.index, wrong, first, u32(bytes[first]), u32(h.expected[first]));
                         ok = false;
                     }
@@ -275,7 +297,7 @@ namespace
                         wrong = 1;
                     if (wrong)
                     {
-                        std::printf("    %s (%s): buffer in slot %u has %u wrong bytes, the first at byte %u: GPU %u, CPU %u\n", name.CStr(),
+                        std::printf("    %s (%s): buffer in slot %u has %u wrong bytes, the first at byte %u: GPU %u, CPU %u\n", label.CStr(),
                                     direct3d ? "DXBC" : "GLSL 430", b.slot, wrong, first, u32(bytes[first]), u32(b.expected[first]));
                         ok = false;
                     }

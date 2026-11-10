@@ -137,6 +137,53 @@ HX_TEST(Cache, CompilesEveryDistinctVariantOnce)
     HX_CHECK(cache.Misses() == 5u && cache.MemoryHits() == 9u);
 }
 
+HX_TEST(Cache, CompilesKernelVariants)
+{
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    ComputeDescription blur;
+    String error;
+    HX_REQUIRE(ReadComputeDefinition(a, a.FindType("Helix.ShaderTests", "Blur"), blur, error));
+    const ComputeKernel& horizontal = blur.kernels[usize(blur.FindKernel("Horizontal"))];
+    const ComputeKernel& vertical = blur.kernels[usize(blur.FindKernel("Vertical"))];
+
+    // Each kernel makes variants of the keywords its own code reads: Horizontal reads Wide, Vertical the shader feature Taps.
+    VariantSet wide, taps;
+    bool ok = EnumerateKernelVariants(blur, horizontal, {}, wide, error);
+    if (!ok)
+        std::printf("    %s\n", error.CStr());
+    HX_REQUIRE(ok);
+    HX_CHECK(wide.keywords.Size() == 1u && wide.keywords[0] == "Wide" && wide.variants.Size() == 2u);
+    HX_REQUIRE(EnumerateKernelVariants(blur, vertical, {}, taps, error));
+    HX_CHECK(taps.keywords.Size() == 1u && taps.keywords[0] == "Taps" && taps.variants.Size() == 1u);
+    const i64 high[] = {5};
+    const KeywordSelection used[] = {{"Taps", high}};
+    HX_REQUIRE(EnumerateKernelVariants(blur, vertical, used, taps, error) && taps.variants.Size() == 2u);
+    HX_CHECK(!EnumerateKernelVariants(blur, horizontal, {}, wide, error, 1) && StringView(error).Contains("kernel Horizontal has more than 1"));
+    HX_REQUIRE(EnumerateKernelVariants(blur, horizontal, {}, wide, error));
+
+    // Every variant compiles for the compute targets through the cache, and comes from it the second time.
+    ShaderCache cache;
+    const ShaderTarget targets[] = {ShaderTarget::Glsl430, ShaderTarget::Essl310, ShaderTarget::Dxbc};
+    for (u32 round = 0; round < 2; round++)
+        for (ShaderTarget target : targets)
+            for (usize v = 0; v < wide.variants.Size(); v++)
+            {
+                Array<KeywordValue> values;
+                wide.Values(v, values);
+                TranslateOptions options;
+                options.keywords = Span<const KeywordValue>(values.Data(), values.Size());
+                Module module;
+                CompiledShader compiled;
+                HX_REQUIRE(TranslateEntryPoint(a, horizontal.method, Stage::Compute, module, error, options) &&
+                           CompileModule(module, target, compiled, error, &cache));
+                HX_CHECK(compiled.stage == Stage::Compute && compiled.groupSize[0] == 64 && compiled.groupSize[1] == 1 && !compiled.code.Empty());
+                if (target == ShaderTarget::Essl310)
+                    HX_CHECK(compiled.Text().StartsWith("#version 310 es"));
+            }
+    HX_CHECK(cache.Misses() == 6u && cache.MemoryHits() == 6u);
+}
+
 HX_TEST(Cache, KeepsShadersInADirectory)
 {
     Assembly a;

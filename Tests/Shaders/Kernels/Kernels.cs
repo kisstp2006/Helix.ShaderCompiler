@@ -242,3 +242,31 @@ public static class ImageReadWrite
         colors[p] = new float4(id.x * 0.25f, id.y * 0.5f, 0.125f, 1.0f);
     }
 }
+
+public enum Curve
+{
+    Linear,
+    Square,
+    Cube,
+}
+
+/// <summary>Runs once per combination of its keywords; fields are not readonly so the oracle can set them.</summary>
+public static class Shaped
+{
+    public static readonly int3 Groups = new(2, 1, 1);
+
+    [Keyword] public static bool Negate;
+    [Keyword] public static Curve Shape;
+
+    [Storage(0)] public static RWStructuredBuffer<float> values;
+
+    public static void Setup() => values = RWStructuredBuffer<float>.FromArray(new float[128]);
+
+    [ComputeShader(64)]
+    public static void Run([DispatchThreadId] uint3 id)
+    {
+        float x = id.x * 0.125f;
+        float y = Shape == Curve.Square ? x * x : Shape == Curve.Cube ? x * x * x : x;
+        values[(int)id.x] = Negate ? -y : y;
+    }
+}
