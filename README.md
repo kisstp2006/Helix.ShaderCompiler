@@ -266,7 +266,8 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
 ## What shader code may use
 
 - `float`, `int`, `uint`, `bool`, the vector and matrix types of Helix.Shaders, structs of those (also nested).
-- Static methods, generic methods, `ref`, `out` and `in` parameters, methods of user structs.
+- Static methods, generic methods, `ref`, `out` and `in` parameters, ref locals, methods of user structs.
+- Vector components and matrix columns by index (`v[i]`, `m[i]`), also written at computed positions.
 - `if`, `for`, `while`, `do`, `switch`, `break`, `continue`, early `return`, `?:`, `&&`, `||`.
 - The functions of `ShaderMath`, `Texture2D.Sample`, `SampleLevel`, `Load`, `Size`, and uniform structs, textures and samplers
   declared as static fields.
@@ -301,7 +302,8 @@ Dynamic keywords (decided at run time) are not available yet.
 | `[Uniform(slot)] static T name` | constant buffer `b<slot>` |
 | `[Texture(slot)] static Texture2D name` | texture `t<slot>` with sampler `s<slot>` |
 
-Not written yet for Direct3D: writing a vector or matrix element with a computed index.
+A vector component or matrix column written at a computed index becomes a conditional move per element, since registers
+cannot be indexed.
 `asin`, `acos` and `atan` are polynomial approximations (error below 0.001), since the bytecode has no such instructions.
 
 ## Tests
@@ -316,6 +318,7 @@ Not written yet for Direct3D: writing a vector or matrix element with a computed
 - Compute: five kernels (a uniform and a buffer, structs between two buffers on a 2D grid, an in place update with a
   helper that loops and returns early on a 3D grid, counters shared through atomic adds, a storage texture) run on the CPU and are dispatched as GLSL 4.30 and as Direct3D
   bytecode on every adapter; the buffers must be the same byte by byte, texels within the last bit.
+- Indexed writes: vector components and matrix columns written and read at positions computed per pixel.
 - Stage values: a case reads `[FrontFacing]` (drawn once per winding into the two halves of the target) and a case writes
   `[Depth]` (a probe at depth 0.5 shows where it wrote more).
 - Bindless: a fragment case with two bindless textures (different samplers) and a bindless buffer, and a kernel that reads one

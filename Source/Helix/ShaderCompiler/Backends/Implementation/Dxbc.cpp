@@ -68,6 +68,8 @@ namespace helix::shadercompiler
             bool output = false;
             // The depth output of a fragment shader, one component without a register number.
             bool depth = false;
+            // A temp whose x is all bits set where this place is written; -1 when it is always written.
+            i32 cond = -1;
         };
 
         struct Value
@@ -371,10 +373,36 @@ namespace helix::shadercompiler
                 return first;
             }
 
+            static Src Condition(const Dst& d)
+            {
+                Src c;
+                c.reg = u32(d.cond);
+                c.isFloat = false;
+                return c;
+            }
+
+            // A conditional place keeps what it holds where its condition is clear. Conditional places come from a computed
+            // index, so they all take the one part of the value.
             void StoreValue(const Array<Dst>& places, const Value& v)
             {
-                for (usize i = 0; i < places.Size() && i < v.parts.Size(); i++)
-                    Store(places[i], v.parts[i]);
+                for (usize i = 0; i < places.Size(); i++)
+                {
+                    const Dst& d = places[i];
+                    if (d.cond < 0)
+                    {
+                        if (i < v.parts.Size())
+                            Store(d, v.parts[i]);
+                        continue;
+                    }
+                    const Src& value = v.parts[0];
+                    Src current;
+                    current.reg = d.reg;
+                    current.count = d.count;
+                    current.isFloat = value.isFloat;
+                    for (u32 c = 0; c < 4; c++)
+                        current.swizzle[c] = d.comps[c < d.count ? c : d.count - 1u];
+                    Store(d, Emit(kMovc, d.count, Condition(d), value, current, value.isFloat));
+                }
             }
 
             Array<Dst> Places(const Value& variable) const
@@ -386,7 +414,7 @@ namespace helix::shadercompiler
             }
 
             // Registers an assignment target refers to.
-            bool Place(const Instance& in, ExprId id, Array<Dst>& out)
+            bool Place(Instance& in, ExprId id, Array<Dst>& out)
             {
                 const Expr& e = in.fn->exprs[id];
                 switch (e.kind)
@@ -421,18 +449,36 @@ namespace helix::shadercompiler
                 case ExprKind::Index:
                 {
                     Array<Dst> whole;
-                    const Expr& index = in.fn->exprs[e.b];
-                    if (index.kind != ExprKind::ConstInt)
-                        return Fail("writing a vector or matrix element with a computed index is not supported by the Direct3D backend yet");
                     if (!Place(in, e.a, whole))
                         return false;
-                    if (in.fn->exprs[e.a].type.IsMatrix())
-                        out.Push(whole[usize(index.integer)]);
-                    else
-                    {
+                    bool matrix = in.fn->exprs[e.a].type.IsMatrix();
+                    auto element = [&](u32 k) {
+                        if (matrix)
+                            return whole[k];
                         Dst d = whole[0];
-                        d.comps[0] = whole[0].comps[index.integer & 3];
+                        d.comps[0] = whole[0].comps[k & 3];
                         d.count = 1;
+                        return d;
+                    };
+                    const Expr& index = in.fn->exprs[e.b];
+                    if (index.kind == ExprKind::ConstInt)
+                    {
+                        out.Push(element(u32(index.integer)));
+                        return true;
+                    }
+                    // A computed index may name every element: each is written only where the index equals its position.
+                    Value position;
+                    if (!Eval(in, e.b, position))
+                        return false;
+                    Src i = Scalar(position.parts[0]);
+                    u32 count = matrix ? u32(whole.Size()) : whole[0].count;
+                    for (u32 k = 0; k < count; k++)
+                    {
+                        Dst d = element(k);
+                        Src match = Emit(kIeq, 1, i, ImmI(k), false);
+                        if (d.cond >= 0)
+                            match = Emit(kAnd, 1, match, Condition(d), false);
+                        d.cond = i32(match.reg);
                         out.Push(d);
                     }
                     return true;

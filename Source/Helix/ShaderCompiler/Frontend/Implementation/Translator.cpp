@@ -103,6 +103,9 @@ namespace helix::shadercompiler
                 MethodSig sig;
                 Array<Type> typeArgs;
                 Array<u8> temporary; // per local: created by the translation, written once before use
+                // Per IL local: a ref local (the C# compiler makes them for compound assignments) and the place it refers to.
+                Array<u8> isRef;
+                Array<ExprId> refTarget;
                 Array<Instruction> code;
                 Array<i32> blockOfOffset;
                 Array<FlowBlock> blocks;
@@ -1096,12 +1099,37 @@ namespace helix::shadercompiler
                         Assign(mt, param(u32(in.value)), value);
                         break;
                     }
-                    case Opcode::LdlocS: case Opcode::Ldloc: Push(mt, local(u32(in.value))); break;
-                    case Opcode::LdlocaS: case Opcode::Ldloca: Push(mt, local(u32(in.value)), true); break;
+                    case Opcode::LdlocS: case Opcode::Ldloc:
+                    {
+                        u32 slot = u32(in.value);
+                        if (slot < mt.isRef.Size() && mt.isRef[slot])
+                        {
+                            // A ref local stands for the place it was set to.
+                            if (!mt.refTarget[slot])
+                                return Fail(mt.name, "a ref local is read before it is set");
+                            Push(mt, mt.refTarget[slot], true);
+                        }
+                        else
+                            Push(mt, local(slot));
+                        break;
+                    }
+                    case Opcode::LdlocaS: case Opcode::Ldloca:
+                        if (u32(in.value) < mt.isRef.Size() && mt.isRef[u32(in.value)])
+                            return Fail(mt.name, "the address of a ref local is not available in shaders");
+                        Push(mt, local(u32(in.value)), true);
+                        break;
                     case Opcode::StlocS: case Opcode::Stloc:
                     {
-                        ExprId value = Pop(mt).e;
-                        Assign(mt, local(u32(in.value)), value);
+                        u32 slot = u32(in.value);
+                        Item item = Pop(mt);
+                        if (slot < mt.isRef.Size() && mt.isRef[slot])
+                        {
+                            if (!item.address)
+                                return Fail(mt.name, "a ref local must refer to a variable, a field or an element");
+                            mt.refTarget[slot] = item.e;
+                            break;
+                        }
+                        Assign(mt, local(slot), item.e);
                         break;
                     }
                     case Opcode::LdcI4S: case Opcode::LdcI4: Push(mt, ConstInt(mt, in.value, kInt)); break;
@@ -1359,8 +1387,10 @@ namespace helix::shadercompiler
                     {
                         Type t;
                         byRef = false;
-                        if (!MapType(s, &mt, t, byRef, mt.name) || byRef)
+                        if (!MapType(s, &mt, t, byRef, mt.name))
                             return Fail(mt.name, "a local variable has a type that shaders cannot use");
+                        mt.isRef.Push(byRef ? 1 : 0);
+                        mt.refTarget.Push(0);
                         NewLocal(mt, t, false);
                     }
                 }

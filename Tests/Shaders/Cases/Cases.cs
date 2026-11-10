@@ -593,3 +593,23 @@ public static class Depths
         return o;
     }
 }
+
+/// <summary>Writes vector components and matrix columns at positions computed per pixel.</summary>
+public static class IndexedWrites
+{
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        int i = (int)(uv.x * 4.0f);
+        int j = (int)(uv.y * 3.0f);
+        float4 v = new float4(0.1f, 0.2f, 0.3f, 0.4f);
+        v[i] = 0.9f;
+        v[3 - i] += 0.05f;
+        float3x3 m = new float3x3(new float3(0.25f), new float3(0.5f), new float3(0.75f));
+        m[j] = new float3(uv, 1.0f - uv.x);
+        float3 column = m[2 - j];
+        float3 sum = m[0] + m[1] + m[2];
+        return new float4(v.x * 0.5f + column.x * 0.5f, v.y * 0.5f + sum.y * 0.2f, v.z * 0.5f + v.w * 0.5f, sum.z * 0.3f);
+    }
+}
