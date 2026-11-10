@@ -402,6 +402,11 @@ cannot be indexed.
 - HLSL text: registers, samplers with their textures, cbuffers, mul with swapped operands for the transposed matrices,
   numthreads and atomics, and an HLSL form for every case and kernel; printed when Direct3D rejects a shader and with
   HELIX_PRINT_SHADERS.
+- Corpus: 127 entry points (cases, kernels, the Helix.RHI shaders and the definitions) compile for every GLSL, GLSL ES
+  and Direct3D target that can hold them, verified after every pass; Tests/Shaders/Cases/Corpus.cs adds cases for
+  swizzles, integer bits, comparisons, nested branches, while and do loops, switches, math, geometry, clamping,
+  matrices, struct returns, call chains, generics, conversions, constants, discard in a loop, half vectors, ternaries
+  and bit casts; kernels for a scan, a matrix product, an image grid and nested struct buffers.
 - Cache levels: source keys are stable, depend on keyword values but not their order and on the target, change with an
   edited method body only for the shaders that reach it; a second compile skips the frontend; the variants of a pass
   compiled in parallel equal those compiled one after the other (run 60 times).

@@ -451,6 +451,8 @@ namespace helix::shadercompiler::frontend
         } restore{location, location};
         location = {current, row, 0};
         Method mt;
+        // Expression 0 is the null expression, also in a function without expressions.
+        mt.fn.exprs.Emplace();
         MethodInfo info = a->Method(row);
         mt.name = info.name;
         mt.typeArgs = typeArgs;

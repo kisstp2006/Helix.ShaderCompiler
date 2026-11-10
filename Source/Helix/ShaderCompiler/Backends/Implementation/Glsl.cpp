@@ -370,6 +370,20 @@ namespace helix::shadercompiler
                     function(kCompare[u32(e.op) - u32(Op::Eq)]);
                     return;
                 }
+                if (e.op == Op::Rem && ta.base == BaseType::Int)
+                {
+                    // GLSL leaves % of negative values undefined; C# keeps the sign of the dividend, as a - b * (a / b) does.
+                    out.Append('(');
+                    Value(e.a);
+                    out.Append(" - ");
+                    Value(e.b);
+                    out.Append(" * (");
+                    Value(e.a);
+                    out.Append(" / ");
+                    Value(e.b);
+                    out.Append("))");
+                    return;
+                }
                 if (e.op == Op::Rem && ta.base == BaseType::Float)
                 {
                     out.Append('(');

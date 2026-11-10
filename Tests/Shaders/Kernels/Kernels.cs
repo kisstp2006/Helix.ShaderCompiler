@@ -270,3 +270,121 @@ public static class Shaped
         values[(int)id.x] = Negate ? -y : y;
     }
 }
+
+/// <summary>Each thread sums the elements before its own: an inclusive scan with a loop of its own length.</summary>
+public static class Scan
+{
+    public static readonly int3 Groups = new(1, 1, 1);
+
+    [Storage(0)] public static StructuredBuffer<uint> input;
+    [Storage(1)] public static RWStructuredBuffer<uint> sums;
+
+    public static void Setup()
+    {
+        uint[] values = new uint[64];
+        for (int i = 0; i < values.Length; i++)
+            values[i] = (uint)(i * 7 % 13);
+        input = StructuredBuffer<uint>.FromArray(values);
+        sums = RWStructuredBuffer<uint>.FromArray(new uint[64]);
+    }
+
+    [ComputeShader(64)]
+    public static void Run([DispatchThreadId] uint3 id)
+    {
+        uint total = 0u;
+        for (int i = 0; i <= (int)id.x; i++)
+            total += input[i];
+        sums[(int)id.x] = total;
+    }
+}
+
+/// <summary>A product of two 8 by 8 integer matrices, one element per thread.</summary>
+public static class MatrixProduct
+{
+    public static readonly int3 Groups = new(1, 1, 1);
+
+    [Storage(0)] public static StructuredBuffer<int> left;
+    [Storage(1)] public static StructuredBuffer<int> right;
+    [Storage(2)] public static RWStructuredBuffer<int> product;
+
+    public static void Setup()
+    {
+        int[] a = new int[64], b = new int[64];
+        for (int i = 0; i < 64; i++)
+        {
+            a[i] = i % 5 - 2;
+            b[i] = i % 7 - 3;
+        }
+        left = StructuredBuffer<int>.FromArray(a);
+        right = StructuredBuffer<int>.FromArray(b);
+        product = RWStructuredBuffer<int>.FromArray(new int[64]);
+    }
+
+    [ComputeShader(8, 8)]
+    public static void Run([DispatchThreadId] uint3 id)
+    {
+        int row = (int)id.y, column = (int)id.x, sum = 0;
+        for (int k = 0; k < 8; k++)
+            sum += left[row * 8 + k] * right[k * 8 + column];
+        product[row * 8 + column] = sum;
+    }
+}
+
+/// <summary>A storage texture written from integer math on a 2D grid.</summary>
+public static class ImageGrid
+{
+    public static readonly int3 Groups = new(2, 2, 1);
+
+    [Storage(0)] public static RWTexture2D<uint> cells;
+
+    public static void Setup() => cells = RWTexture2D<uint>.Create(16, 16);
+
+    [ComputeShader(8, 8)]
+    public static void Run([DispatchThreadId] uint3 id)
+    {
+        uint x = id.x, y = id.y;
+        cells[new int2((int)x, (int)y)] = (x * 31u + y * 17u) ^ (x << 4) ^ (y << 8);
+    }
+}
+
+public struct Cell
+{
+    public float4 value;
+    public Weights weights;
+}
+
+public struct Weights
+{
+    public float4 near;
+    public float4 far;
+}
+
+/// <summary>Buffers of nested structs read and written field by field.</summary>
+public static class NestedBuffers
+{
+    public static readonly int3 Groups = new(1, 1, 1);
+
+    [Storage(0)] public static RWStructuredBuffer<Cell> cells;
+
+    public static void Setup()
+    {
+        Cell[] items = new Cell[32];
+        for (int i = 0; i < items.Length; i++)
+        {
+            items[i].value = new float4(i, 0.5f * i, 1.0f, 2.0f);
+            items[i].weights.near = new float4(0.25f, 0.5f, 0.75f, 1.0f);
+            items[i].weights.far = new float4(i % 4);
+        }
+        cells = RWStructuredBuffer<Cell>.FromArray(items);
+    }
+
+    [ComputeShader(32)]
+    public static void Run([DispatchThreadId] uint3 id)
+    {
+        int i = (int)id.x;
+        Cell c = cells[i];
+        c.value = c.value * c.weights.near + c.weights.far;
+        c.weights.far.x = c.value.y;
+        cells[i] = c;
+    }
+}

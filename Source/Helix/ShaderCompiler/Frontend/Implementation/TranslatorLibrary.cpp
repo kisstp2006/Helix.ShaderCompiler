@@ -297,7 +297,8 @@ namespace helix::shadercompiler::frontend
                 Push(mt, o.operands == 1 ? MakeUnary(mt.fn, o.op, args[0].e, result) : MakeBinary(mt.fn, o.op, args[0].e, args[1].e, result));
                 return true;
             }
-        if (member == "op_Explicit" && args.Size() == 1)
+        // Conversions between library types (half to float and back, int to float, ...) are casts either way.
+        if ((member == "op_Explicit" || member == "op_Implicit") && args.Size() == 1)
         {
             Push(mt, Cast(mt, args[0].e, result));
             return true;
