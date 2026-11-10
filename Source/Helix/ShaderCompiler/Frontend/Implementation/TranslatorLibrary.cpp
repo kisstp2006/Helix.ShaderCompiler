@@ -229,8 +229,9 @@ namespace helix::shadercompiler::frontend
         {
             // The handle comes first unless a new one is made; damaged IL can call any member either way.
             auto takes = [&](usize count, bool constructs) {
-                return isNew == constructs && args.Size() == count ||
-                       Fail(mt.name, Format("{}.{} takes {} arguments, the call has {}", typeName, member, count, args.Size()));
+                if (isNew == constructs && args.Size() == count)
+                    return true;
+                return Fail(mt.name, Format("{}.{} takes {} arguments, the call has {}", typeName, member, count, args.Size()));
             };
             if (member == ".ctor")
             {
