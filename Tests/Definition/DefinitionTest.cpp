@@ -221,6 +221,39 @@ HX_TEST(Definition, TakesPassesWithUsePass)
     HX_CHECK(!EnumerateVariants(a, unresolved, unresolved.passes[0], {}, set, error) && StringView(error).Contains("not resolved"));
 }
 
+HX_TEST(Definition, ReadsComputeDefinitions)
+{
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    String error;
+    ComputeDescription blur;
+    bool ok = ReadComputeDefinition(a, a.FindType("Helix.ShaderTests", "Blur"), blur, error);
+    if (!ok)
+        std::printf("    %s\n", error.CStr());
+    HX_REQUIRE(ok);
+    HX_CHECK(blur.name == "Tests/Blur" && blur.assembly == &a && blur.keywords.Size() == 2u && blur.FindKeyword("Taps")->shaderFeature);
+    // Kernels by name, in the order they are written, with their thread group sizes.
+    HX_REQUIRE(blur.kernels.Size() == 2u);
+    HX_CHECK(blur.FindKernel("Horizontal") == 0 && blur.FindKernel("Vertical") == 1 && blur.FindKernel("Helper") < 0 && !blur.HasKernel("Run"));
+    const ComputeKernel& vertical = blur.kernels[1];
+    HX_CHECK(vertical.groupSize[0] == 8 && vertical.groupSize[1] == 8 && vertical.groupSize[2] == 2 && blur.kernels[0].groupSize[0] == 64 &&
+             blur.kernels[0].groupSize[1] == 1);
+    HX_CHECK(vertical.method == a.FindMethod(a.FindType("Helix.ShaderTests", "Blur"), "Vertical"));
+
+    Array<ComputeDescription> all;
+    HX_CHECK(!ReadComputeDefinitions(a, all, error) && StringView(error).Contains("Tests/NoKernels"));
+    const char* bad[][2] = {{"NoKernels", "no kernel"}, {"WithProperty", "material properties"}, {"Overloaded", "two kernels are named Run"}};
+    for (const auto& b : bad)
+    {
+        ComputeDescription d;
+        HX_CHECK(!ReadComputeDefinition(a, a.FindType("Helix.ShaderTests", b[0]), d, error));
+        std::printf("    %s\n", error.CStr());
+        HX_CHECK(StringView(error).Contains(b[1]));
+    }
+    ComputeDescription notCompute;
+    HX_CHECK(!ReadComputeDefinition(a, a.FindType("Helix.ShaderTests", "Glass"), notCompute, error));
+}
+
 HX_TEST(Definition, ReadsEveryShaderAndReportsBadOnes)
 {
     Assembly a;

@@ -354,3 +354,53 @@ public sealed class BadMaterial : ShaderDefinition
         public static float4 Fragment() => material.tint;
     }
 }
+
+/// <summary>A compute shader with two kernels and keywords.</summary>
+[ComputeDefinition("Tests/Blur")]
+public sealed class Blur : ComputeDefinition
+{
+    [Keyword] public static readonly bool Wide;
+    [Keyword(ShaderFeature = true)] public static readonly GlassDetail Taps;
+
+    [Storage(0)] public static RWStructuredBuffer<float> values;
+
+    [ComputeShader(64)]
+    public static void Horizontal([DispatchThreadId] uint3 id) => values[(int)id.x] = Wide ? 2.0f : 1.0f;
+
+    [ComputeShader(8, 8, 2)]
+    public static void Vertical([DispatchThreadId] uint3 id) => values[(int)id.y] = Taps == GlassDetail.High ? 3.0f : 0.5f;
+
+    public static float Helper(float v) => v * 2.0f;
+}
+
+// Compute definitions that cannot work.
+[ComputeDefinition("Tests/NoKernels")]
+public sealed class NoKernels : ComputeDefinition
+{
+    public static float Helper(float v) => v;
+}
+
+[ComputeDefinition("Tests/WithProperty")]
+public sealed class WithProperty : ComputeDefinition
+{
+    public float strength;
+
+    [ComputeShader(1)]
+    public static void Run()
+    {
+    }
+}
+
+[ComputeDefinition("Tests/Overloaded")]
+public sealed class Overloaded : ComputeDefinition
+{
+    [ComputeShader(1)]
+    public static void Run()
+    {
+    }
+
+    [ComputeShader(1)]
+    public static void Run([DispatchThreadId] uint3 id)
+    {
+    }
+}

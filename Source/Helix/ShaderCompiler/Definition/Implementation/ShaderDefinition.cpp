@@ -387,6 +387,52 @@ namespace helix::shadercompiler
                 return true;
             }
 
+            bool Compute(u32 typeRow, const Attribute& attribute, ComputeDescription& out)
+            {
+                TypeDefInfo type = a.TypeDef(typeRow);
+                // Messages and keyword checks are shared with shader definitions.
+                ShaderDescription shader;
+                shader.name = attribute.fixed.Empty() ? type.name : attribute.fixed[0].text;
+                out.name = shader.name;
+                out.type = typeRow;
+                out.assembly = &a;
+                for (u32 f = type.fieldBegin; f < type.fieldEnd; f++)
+                {
+                    FieldInfo field = a.Field(f);
+                    Array<Attribute> onField = Attributes(a, Token(Table::Field, f));
+                    if (const Attribute* keyword = Find(onField, "KeywordAttribute"))
+                    {
+                        if (!Keyword(shader, field, *keyword))
+                            return false;
+                    }
+                    else if (!field.IsStatic() && (field.flags & 0x7) == 0x6)
+                        return Fail(shader, Format("field {}: compute shaders have no material properties; use a [Uniform] block", field.name));
+                }
+                out.keywords = Move(shader.keywords);
+                for (u32 m = type.methodBegin; m < type.methodEnd; m++)
+                {
+                    Array<Attribute> onMethod = Attributes(a, Token(Table::MethodDef, m));
+                    const Attribute* kernel = Find(onMethod, "ComputeShaderAttribute");
+                    if (!kernel)
+                        continue;
+                    ComputeKernel k;
+                    k.name = a.Method(m).name;
+                    k.method = m;
+                    for (usize i = 0; i < 3 && i < kernel->fixed.Size(); i++)
+                    {
+                        if (kernel->fixed[i].integer < 1)
+                            return Fail(shader, Format("kernel {} has a thread group size below 1", k.name));
+                        k.groupSize[i] = u32(kernel->fixed[i].integer);
+                    }
+                    if (out.FindKernel(k.name) >= 0)
+                        return Fail(shader, Format("two kernels are named {}", k.name));
+                    out.kernels.Push(Move(k));
+                }
+                if (out.kernels.Empty())
+                    return Fail(shader, "it has no kernel; mark static methods with [ComputeShader(x, y, z)]");
+                return true;
+            }
+
             bool Shader(u32 typeRow, const Array<Attribute>& attributes, const Attribute& attribute, ShaderDescription& shader)
             {
                 TypeDefInfo type = a.TypeDef(typeRow);
@@ -521,6 +567,62 @@ namespace helix::shadercompiler
             for (usize p = 0; p < shaders[s].passes.Size(); p++)
                 if (!ResolvePass(shaders, s, p, chain, error))
                     return false;
+        return true;
+    }
+
+    i32 ComputeDescription::FindKernel(StringView kernelName) const
+    {
+        for (usize i = 0; i < kernels.Size(); i++)
+            if (kernels[i].name == kernelName)
+                return i32(i);
+        return -1;
+    }
+
+    const ShaderKeyword* ComputeDescription::FindKeyword(StringView keywordName) const
+    {
+        for (const ShaderKeyword& k : keywords)
+            if (k.name == keywordName)
+                return &k;
+        return nullptr;
+    }
+
+    bool ReadComputeDefinition(const Assembly& assembly, u32 typeRow, ComputeDescription& out, String& error)
+    {
+        out = ComputeDescription();
+        error.Clear();
+        Array<Attribute> attributes = Attributes(assembly, Token(Table::TypeDef, typeRow));
+        const Attribute* compute = Find(attributes, "ComputeDefinitionAttribute");
+        if (!compute)
+        {
+            error = "the class has no [ComputeDefinition] attribute";
+            return false;
+        }
+        Reader reader{assembly, error};
+        return reader.Compute(typeRow, *compute, out);
+    }
+
+    bool ReadComputeDefinitions(const Assembly& assembly, Array<ComputeDescription>& out, String& error)
+    {
+        out.Clear();
+        error.Clear();
+        Reader reader{assembly, error};
+        for (u32 row = 1; row <= assembly.RowCount(Table::TypeDef); row++)
+        {
+            Array<Attribute> attributes = Attributes(assembly, Token(Table::TypeDef, row));
+            const Attribute* compute = Find(attributes, "ComputeDefinitionAttribute");
+            if (!compute)
+                continue;
+            ComputeDescription description;
+            if (!reader.Compute(row, *compute, description))
+                return false;
+            for (const ComputeDescription& other : out)
+                if (other.name == description.name)
+                {
+                    error = Format("compute shader {} is defined twice", description.name);
+                    return false;
+                }
+            out.Push(Move(description));
+        }
         return true;
     }
 

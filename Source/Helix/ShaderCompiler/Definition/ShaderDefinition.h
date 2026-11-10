@@ -146,6 +146,37 @@ namespace helix::shadercompiler
         const ShaderKeyword* FindKeyword(StringView keywordName) const;
     };
 
+    // One kernel of a compute shader: a [ComputeShader] method.
+    struct ComputeKernel
+    {
+        String name;
+        // MethodDef row of the kernel.
+        u32 method = 0;
+        u32 groupSize[3] = {1, 1, 1};
+    };
+
+    // A compute shader: a class derived from ComputeDefinition with [ComputeDefinition(name)].
+    struct ComputeDescription
+    {
+        String name;
+        Array<ShaderKeyword> keywords;
+        // In the order the methods are written; the index is the kernel index of the reference engine.
+        Array<ComputeKernel> kernels;
+        u32 type = 0;
+        const Assembly* assembly = nullptr;
+
+        // Index of the kernel with this name; -1 when there is none (the reference engine throws there).
+        i32 FindKernel(StringView kernelName) const;
+        bool HasKernel(StringView kernelName) const { return FindKernel(kernelName) >= 0; }
+        const ShaderKeyword* FindKeyword(StringView keywordName) const;
+    };
+
+    // Reads every compute definition of the assembly; fails naming the shader for a definition without kernels, two
+    // kernels with one name, a keyword that is neither bool nor enum, or instance fields (compute shaders have no
+    // material properties).
+    bool ReadComputeDefinitions(const Assembly& assembly, Array<ComputeDescription>& out, String& error);
+    bool ReadComputeDefinition(const Assembly& assembly, u32 typeRow, ComputeDescription& out, String& error);
+
     // Reads every shader definition of the assembly. Fails with a message naming the shader and the member for
     // declarations that cannot work: a property type materials cannot hold, a keyword that is neither bool nor enum,
     // a pass without a vertex or fragment shader, two passes of one SubShader or two properties with one name, passes

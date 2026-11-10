@@ -93,6 +93,11 @@ the pass, matched without case in the first SubShader that has it. `ShaderPass::
 `EnumerateVariants` translates. `ReadShaderDefinition` reads one class and leaves UsePass entries for
 `ResolveUsePasses`; a missing shader or pass and a chain of UsePass that comes back are errors.
 
+A class derived from `ComputeDefinition` with `[ComputeDefinition(name)]` is a compute shader. `ReadComputeDefinitions`
+lists its keywords and kernels (the `[ComputeShader(x, y, z)]` methods in source order, with their thread group sizes);
+`FindKernel(name)` gives the kernel index as the reference engine does. A definition without kernels, two kernels with
+one name and instance fields (compute shaders have no material properties) are errors.
+
 ## Variants and the cache
 
 ```cpp
@@ -376,7 +381,8 @@ cannot be indexed.
   block layout in reflection and GLSL; a user uniform on the keyword slot is rejected.
 - Debug information: lines from the PDB next to the test shaders and from the one embedded in Tests/Includes, damaged
   PDBs, and errors that name the line of the C# source, also inside a called method.
-- Definitions: SubShaders with inherited render state, passes taken with UsePass from this assembly and from Tests/Includes
+- Definitions: a compute definition with two kernels and keywords, and three that cannot work; SubShaders with inherited
+  render state, passes taken with UsePass from this assembly and from Tests/Includes
   (their variants come from the keywords of the borrowed code), missing shaders and passes, UsePass loops.
 - Includes: structs, an enum, a readonly property and functions of Tests/Includes, a uniform struct of it, and a
   capturing lambda passed into one of its functions; resources declared there are bound by slot; without the
