@@ -177,6 +177,22 @@ HX_TEST(Glsl, EmitsComputeShadersWithStorageBuffers)
     HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(rejected, "WrongFormat"), Stage::Compute, module, error));
     std::printf("    %s\n", error.CStr());
     HX_CHECK(StringView(error).Contains("does not fit"));
+
+    // Uniform array elements lie 16 bytes apart on the GPU, so scalar elements do not match C#.
+    HX_CHECK(TranslateEntryPoint(a, a.FindMethod(rejected, "ScalarArray"), Stage::Fragment, module, error) &&
+             !EmitGlsl(module, GlslTarget::Glsl330, desktop, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("scalarBlock.values") && StringView(error).Contains("4 bytes in C# but 16"));
+    HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(rejected, "FixedBuffer"), Stage::Fragment, module, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("fixed buffer") && StringView(error).Contains("[InlineArray]"));
+
+    // Inline arrays become GLSL arrays in locals, structs and uniform blocks.
+    u32 arrays = a.FindType("Helix.ShaderTests.Cases", "InlineArrays");
+    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(arrays, "Fragment"), Stage::Fragment, module, error) &&
+               EmitGlsl(module, GlslTarget::Glsl330, desktop, error) && EmitGlsl(module, GlslTarget::Essl300, mobile, error));
+    HX_CHECK(StringView(desktop.source).Contains("vec4[3]") && StringView(desktop.source).Contains("float[4]") &&
+             StringView(mobile.source).Contains("vec4[3]"));
 }
 
 HX_TEST(Glsl, RejectsWhatTheGpuCannotRun)

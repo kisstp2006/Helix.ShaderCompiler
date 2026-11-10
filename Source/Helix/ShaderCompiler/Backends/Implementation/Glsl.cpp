@@ -31,7 +31,8 @@ namespace helix::shadercompiler
             String Decl(Type t) const
             {
                 bool es = target == GlslTarget::Essl300 || target == GlslTarget::Essl310;
-                return es && t.half ? Format("mediump {}", TypeName(t)) : TypeName(t);
+                Type inner = t.base == BaseType::Array ? m.arrays[t.structIndex].element : t;
+                return es && inner.half ? Format("mediump {}", TypeName(t)) : TypeName(t);
             }
 
             String TypeName(Type t) const
@@ -40,6 +41,8 @@ namespace helix::shadercompiler
                 static constexpr const char* kVector[] = {"", "bvec", "ivec", "uvec", "vec"};
                 if (t.base == BaseType::Struct)
                     return Format("S_{}_{}", m.structs[t.structIndex].name, u32(t.structIndex));
+                if (t.base == BaseType::Array)
+                    return Format("{}[{}]", TypeName(m.arrays[t.structIndex].element), m.arrays[t.structIndex].length);
                 if (t.IsTexture())
                     return String("sampler2D");
                 if (t.IsMatrix())
@@ -82,6 +85,20 @@ namespace helix::shadercompiler
 
             void Zero(Type t)
             {
+                if (t.base == BaseType::Array)
+                {
+                    const ArrayType& a = m.arrays[t.structIndex];
+                    out.Append(TypeName(t));
+                    out.Append('(');
+                    for (u32 i = 0; i < a.length; i++)
+                    {
+                        if (i)
+                            out.Append(", ");
+                        Zero(a.element);
+                    }
+                    out.Append(')');
+                    return;
+                }
                 if (t.base == BaseType::Struct)
                 {
                     const StructType& s = m.structs[t.structIndex];

@@ -81,6 +81,7 @@ namespace helix::shadercompiler
             Translator(const Assembly& assembly, Module& module, String& e, const TranslateOptions& o) : a(assembly), m(module), error(e), options(o) {}
 
             Array<u32> structRows;
+            Array<u32> arrayRows;
             struct FieldGlobal
             {
                 u32 fieldRow;
@@ -103,7 +104,8 @@ namespace helix::shadercompiler
                 MethodSig sig;
                 Array<Type> typeArgs;
                 Array<u8> temporary; // per local: created by the translation, written once before use
-                // Per IL local: a ref local (the C# compiler makes them for compound assignments) and the place it refers to.
+                // Per IL local: 1 for a ref local (the C# compiler makes them for compound assignments), 2 for a Span over an
+                // inline array, and the place it refers to.
                 Array<u8> isRef;
                 Array<ExprId> refTarget;
                 Array<Instruction> code;
@@ -168,6 +170,55 @@ namespace helix::shadercompiler
                 return result;
             }
 
+            // Length of an [InlineArray] struct; 0 for other structs.
+            u32 InlineArrayLength(u32 typeRow) const
+            {
+                Array<CustomAttribute> attributes;
+                a.Attributes(Token(Table::TypeDef, typeRow), attributes);
+                for (const CustomAttribute& c : attributes)
+                    if (c.typeNamespace == "System.Runtime.CompilerServices" && c.typeName == "InlineArrayAttribute")
+                    {
+                        Array<AttributeArgument> fixed, named;
+                        if (DecodeAttribute(a, c, fixed, named) && !fixed.Empty() && fixed[0].integer > 0)
+                            return u32(fixed[0].integer);
+                    }
+                return 0;
+            }
+
+            // An [InlineArray] struct: its one instance field is the element.
+            i32 ArrayFor(u32 typeRow, u32 length, StringView method)
+            {
+                for (usize i = 0; i < arrayRows.Size(); i++)
+                    if (arrayRows[i] == typeRow)
+                        return i32(i);
+                TypeDefInfo t = a.TypeDef(typeRow);
+                ArrayType array;
+                array.length = length;
+                bool found = false;
+                for (u32 f = t.fieldBegin; f < t.fieldEnd; f++)
+                {
+                    FieldInfo field = a.Field(f);
+                    if (field.IsStatic())
+                        continue;
+                    TypeSig sig;
+                    bool byRef = false;
+                    if (found || !ParseFieldSignature(field.signature, sig) || !MapType(sig, nullptr, array.element, byRef, method))
+                    {
+                        Fail(method, Format("inline array {} must have one field of a type shaders can use", t.name));
+                        return -1;
+                    }
+                    found = true;
+                }
+                if (!found || array.element.base == BaseType::Array)
+                {
+                    Fail(method, Format("inline array {}: {}", t.name, found ? "arrays of arrays are not available in shaders" : "it has no element field"));
+                    return -1;
+                }
+                arrayRows.Push(typeRow);
+                m.arrays.Push(Move(array));
+                return i32(m.arrays.Size() - 1);
+            }
+
             i32 StructFor(u32 typeRow, StringView method)
             {
                 for (usize i = 0; i < structRows.Size(); i++)
@@ -184,6 +235,15 @@ namespace helix::shadercompiler
                     TypeSig sig;
                     StructField& out = s.fields.Emplace();
                     bool byRef = false;
+                    // A fixed buffer looks like a struct of one element; it is refused before its type is mapped.
+                    Array<CustomAttribute> attributes;
+                    a.Attributes(Token(Table::Field, f), attributes);
+                    for (const CustomAttribute& c : attributes)
+                        if (c.typeNamespace == "System.Runtime.CompilerServices" && c.typeName == "FixedBufferAttribute")
+                        {
+                            Fail(method, Format("field {}.{} is a fixed buffer, which needs unsafe code; use an [InlineArray] struct", t.name, field.name));
+                            return -1;
+                        }
                     if (!ParseFieldSignature(field.signature, sig) || !MapType(sig, nullptr, out.type, byRef, method))
                     {
                         Fail(method, Format("field {}.{} has a type that shaders cannot use", t.name, field.name));
@@ -237,6 +297,14 @@ namespace helix::shadercompiler
                         out = kInt;
                         return true;
                     }
+                    if (u32 length = InlineArrayLength(sig.token.Row()))
+                    {
+                        i32 array = ArrayFor(sig.token.Row(), length, where);
+                        if (array < 0)
+                            return false;
+                        out = Type::ArrayOf(u32(array));
+                        return true;
+                    }
                     i32 index = StructFor(sig.token.Row(), where);
                     if (index < 0)
                         return false;
@@ -260,6 +328,14 @@ namespace helix::shadercompiler
                     return true;
                 default: return false;
                 }
+            }
+
+            // System.Span<T> or System.ReadOnlySpan<T>, which the C# compiler uses to index inline arrays.
+            bool IsSpanType(const TypeSig& sig) const
+            {
+                StringView ns, name;
+                return sig.kind == ElementType::GenericInst && sig.args.Size() == 1 && a.TypeName(sig.token, ns, name) && ns == "System" &&
+                       (name == "Span`1" || name == "ReadOnlySpan`1");
             }
 
             // RWTexture2D<T> of the shader library.
@@ -726,6 +802,40 @@ namespace helix::shadercompiler
                 return true;
             }
 
+            // The inline array helpers of the C# compiler and the Span members used with them; a span or an element ref is the
+            // place of the array or of the element.
+            bool ArrayCall(Method& mt, StringView member, Array<Item>& args)
+            {
+                if (args.Empty() || TypeOf(mt, args[0].e).base != BaseType::Array)
+                    return Fail(mt.name, Format("{} is used on something that is not an inline array", member));
+                ExprId array = args[0].e;
+                const ArrayType& type = m.arrays[TypeOf(mt, array).structIndex];
+                if (member == "InlineArrayAsSpan" || member == "InlineArrayAsReadOnlySpan")
+                {
+                    Push(mt, array, true);
+                    return true;
+                }
+                if (member == "get_Length")
+                {
+                    Push(mt, ConstInt(mt, type.length, kInt));
+                    return true;
+                }
+                ExprId index = 0;
+                if (member == "InlineArrayFirstElementRef" || member == "InlineArrayFirstElementRefReadOnly")
+                    index = ConstInt(mt, 0, kInt);
+                else if ((member == "InlineArrayElementRef" || member == "InlineArrayElementRefReadOnly" || member == "get_Item") && args.Size() == 2)
+                    index = Coerce(mt, args[1].e, kInt);
+                else
+                    return Fail(mt.name, Format("{} of an inline array is not available in shaders; index the array in a for loop", member));
+                Expr e;
+                e.kind = ExprKind::Index;
+                e.a = array;
+                e.b = index;
+                e.type = type.element;
+                Push(mt, AddExpr(mt.fn, Move(e)), true);
+                return true;
+            }
+
             // Members of RWTexture2D<T>: a texel is the Index expression of the image with an int2.
             bool ImageCall(Method& mt, StringView member, Array<Item>& args)
             {
@@ -1029,13 +1139,15 @@ namespace helix::shadercompiler
                 }
                 MethodSig sig;
                 StringView ns, typeName, member;
-                bool user = token.Is(Table::MethodDef), buffer = false, texture = false, image = false;
+                bool user = token.Is(Table::MethodDef), buffer = false, texture = false, image = false, span = false, inlineArray = false;
                 if (user)
                 {
                     MethodInfo info = a.Method(token.Row());
                     member = info.name;
                     if (!ParseMethodSignature(info.signature, sig))
                         return Fail(mt.name, "damaged method signature");
+                    // Helpers the C# compiler adds for inline arrays.
+                    inlineArray = a.TypeDef(a.DeclaringTypeOfMethod(token.Row())).name == "<PrivateImplementationDetails>" && member.StartsWith("InlineArray");
                 }
                 else if (token.Is(Table::MemberRef))
                 {
@@ -1043,7 +1155,13 @@ namespace helix::shadercompiler
                     member = ref.name;
                     TypeSig spec;
                     bool generic = ref.parent.Is(Table::TypeSpec) && ParseTypeSpec(a.TypeSpecSignature(ref.parent.Row()), spec);
-                    if (generic && IsImageType(spec))
+                    if (generic && IsSpanType(spec))
+                    {
+                        span = true;
+                        if (!ParseMethodSignature(ref.signature, sig))
+                            return Fail(mt.name, "damaged method signature");
+                    }
+                    else if (generic && IsImageType(spec))
                     {
                         image = true;
                         if (!ParseMethodSignature(ref.signature, sig))
@@ -1077,6 +1195,8 @@ namespace helix::shadercompiler
 
                 if (buffer)
                     return BufferCall(mt, member, args);
+                if (inlineArray || span)
+                    return ArrayCall(mt, member, args);
                 if (texture)
                     return TextureCall(mt, member, args);
                 if (image)
@@ -1157,6 +1277,30 @@ namespace helix::shadercompiler
                 mt.stmts = &mt.blocks[blockIndex].stmts;
                 u32 first = mt.info[blockIndex].first, last = mt.info[blockIndex].last;
                 auto local = [&](u32 i) { return Leaf(mt, ExprKind::Local, i, mt.fn.locals[i].type); };
+                // A ref local, or a Span over an inline array, stands for the place it was set to.
+                auto loadLocal = [&](u32 slot) {
+                    if (slot >= mt.isRef.Size() || !mt.isRef[slot])
+                    {
+                        Push(mt, local(slot));
+                        return true;
+                    }
+                    if (!mt.refTarget[slot])
+                        return Fail(mt.name, "a ref local is read before it is set");
+                    Push(mt, mt.refTarget[slot], true);
+                    return true;
+                };
+                auto storeLocal = [&](u32 slot) {
+                    Item item = Pop(mt);
+                    if (slot >= mt.isRef.Size() || !mt.isRef[slot])
+                    {
+                        Assign(mt, local(slot), item.e);
+                        return true;
+                    }
+                    if (!item.address)
+                        return Fail(mt.name, "a ref local must refer to a variable, a field or an element");
+                    mt.refTarget[slot] = item.e;
+                    return true;
+                };
                 auto param = [&](u32 i) { return Leaf(mt, ExprKind::Param, i, mt.fn.params[i].type); };
                 auto target = [&](u32 offset) { return offset < mt.blockOfOffset.Size() ? mt.blockOfOffset[offset] : -1; };
                 auto finish = [&](FlowBlock::End end, ExprId value, i32 yes, i32 no) {
@@ -1196,13 +1340,14 @@ namespace helix::shadercompiler
                     }
                     else if (op >= u32(Opcode::Ldloc0) && op <= u32(Opcode::Ldloc3))
                     {
-                        Push(mt, local(op - u32(Opcode::Ldloc0)));
+                        if (!loadLocal(op - u32(Opcode::Ldloc0)))
+                            return false;
                         handled = true;
                     }
                     else if (op >= u32(Opcode::Stloc0) && op <= u32(Opcode::Stloc3))
                     {
-                        ExprId value = Pop(mt).e;
-                        Assign(mt, local(op - u32(Opcode::Stloc0)), value);
+                        if (!storeLocal(op - u32(Opcode::Stloc0)))
+                            return false;
                         handled = true;
                     }
                     else if (op >= u32(Opcode::LdcI4M1) && op <= u32(Opcode::LdcI4_8))
@@ -1226,38 +1371,26 @@ namespace helix::shadercompiler
                         break;
                     }
                     case Opcode::LdlocS: case Opcode::Ldloc:
-                    {
-                        u32 slot = u32(in.value);
-                        if (slot < mt.isRef.Size() && mt.isRef[slot])
-                        {
-                            // A ref local stands for the place it was set to.
-                            if (!mt.refTarget[slot])
-                                return Fail(mt.name, "a ref local is read before it is set");
-                            Push(mt, mt.refTarget[slot], true);
-                        }
-                        else
-                            Push(mt, local(slot));
+                        if (!loadLocal(u32(in.value)))
+                            return false;
                         break;
-                    }
                     case Opcode::LdlocaS: case Opcode::Ldloca:
+                        if (u32(in.value) < mt.isRef.Size() && mt.isRef[u32(in.value)] == 2)
+                        {
+                            // The address of a Span over an inline array: its members reach the array.
+                            if (!mt.refTarget[u32(in.value)])
+                                return Fail(mt.name, "a span is read before it is set");
+                            Push(mt, mt.refTarget[u32(in.value)], true);
+                            break;
+                        }
                         if (u32(in.value) < mt.isRef.Size() && mt.isRef[u32(in.value)])
                             return Fail(mt.name, "the address of a ref local is not available in shaders");
                         Push(mt, local(u32(in.value)), true);
                         break;
                     case Opcode::StlocS: case Opcode::Stloc:
-                    {
-                        u32 slot = u32(in.value);
-                        Item item = Pop(mt);
-                        if (slot < mt.isRef.Size() && mt.isRef[slot])
-                        {
-                            if (!item.address)
-                                return Fail(mt.name, "a ref local must refer to a variable, a field or an element");
-                            mt.refTarget[slot] = item.e;
-                            break;
-                        }
-                        Assign(mt, local(slot), item.e);
+                        if (!storeLocal(u32(in.value)))
+                            return false;
                         break;
-                    }
                     case Opcode::LdcI4S: case Opcode::LdcI4: Push(mt, ConstInt(mt, in.value, kInt)); break;
                     case Opcode::LdcR4: case Opcode::LdcR8: Push(mt, ConstFloat(mt, in.number)); break;
                     case Opcode::Dup:
@@ -1513,9 +1646,13 @@ namespace helix::shadercompiler
                     {
                         Type t;
                         byRef = false;
-                        if (!MapType(s, &mt, t, byRef, mt.name))
+                        // A Span local only ever views an inline array; it stands for the array.
+                        bool span = IsSpanType(s);
+                        if (span && !MapType(s.args[0], &mt, t, byRef, mt.name))
+                            t = kInt;
+                        else if (!span && !MapType(s, &mt, t, byRef, mt.name))
                             return Fail(mt.name, "a local variable has a type that shaders cannot use");
-                        mt.isRef.Push(byRef ? 1 : 0);
+                        mt.isRef.Push(span ? 2 : byRef ? 1 : 0);
                         mt.refTarget.Push(0);
                         NewLocal(mt, t, false);
                     }

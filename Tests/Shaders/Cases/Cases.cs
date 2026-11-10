@@ -790,3 +790,81 @@ public static class HalfMath
         return new half4(c.zyx, s);
     }
 }
+
+[System.Runtime.CompilerServices.InlineArray(4)]
+public struct Weights
+{
+    private float element;
+}
+
+[System.Runtime.CompilerServices.InlineArray(3)]
+public struct Colors
+{
+    private float4 element;
+}
+
+public struct Light
+{
+    public float4 color;
+    public float4 direction;
+}
+
+[System.Runtime.CompilerServices.InlineArray(2)]
+public struct Lights
+{
+    private Light element;
+}
+
+/// <summary>Fixed size arrays in locals, in a struct, as a parameter and in a uniform block, at constant and computed indices.</summary>
+public static class InlineArrays
+{
+    public struct Scene
+    {
+        public Colors palette;
+        public Lights lights;
+        public float4 ambient;
+    }
+
+    public struct Mix
+    {
+        public Weights weights;
+        public float bias;
+    }
+
+    [Uniform(0)] public static Scene scene;
+
+    public static void Setup()
+    {
+        scene.palette[0] = new float4(1.0f, 0.0f, 0.0f, 1.0f);
+        scene.palette[1] = new float4(0.0f, 1.0f, 0.0f, 1.0f);
+        scene.palette[2] = new float4(0.0f, 0.0f, 1.0f, 1.0f);
+        scene.lights[0] = new Light { color = new float4(0.5f, 0.25f, 0.0f, 1.0f), direction = new float4(1.0f, 0.0f, 0.0f, 0.0f) };
+        scene.lights[1] = new Light { color = new float4(0.0f, 0.25f, 0.5f, 1.0f), direction = new float4(0.0f, 1.0f, 0.0f, 0.0f) };
+        scene.ambient = new float4(0.125f);
+    }
+
+    private static float Total(Weights w, int count)
+    {
+        float sum = 0.0f;
+        for (int i = 0; i < count; i++)
+            sum += w[i];
+        return sum;
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        int cell = (int)(uv.x * 3.0f);
+        Mix mix;
+        mix.bias = 0.0625f;
+        mix.weights = new Weights();
+        for (int i = 0; i < 4; i++)
+            mix.weights[i] = (i + 1) * 0.0625f;
+        mix.weights[cell] += uv.y * 0.25f;
+        float4 color = scene.palette[cell] * Total(mix.weights, 3);
+        Light light = scene.lights[(int)(uv.y * 2.0f)];
+        color += light.color * (light.direction.x * uv.x + light.direction.y * uv.y);
+        return new float4(color.xyz + scene.ambient.xyz + new float3(mix.bias), 1.0f);
+    }
+}

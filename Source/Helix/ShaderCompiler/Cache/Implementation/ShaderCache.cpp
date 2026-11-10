@@ -175,6 +175,12 @@ namespace helix::shadercompiler
                 d.U64(u64(f.semantic) | (u64(f.flat) << 8) | (u64(f.semanticIndex) << 32));
             }
         }
+        d.U64(m.arrays.Size());
+        for (const ArrayType& a : m.arrays)
+        {
+            d.Add(a.element);
+            d.U64(a.length);
+        }
         d.U64(m.globals.Size());
         for (const Global& g : m.globals)
         {

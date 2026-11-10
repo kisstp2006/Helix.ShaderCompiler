@@ -70,6 +70,8 @@ namespace helix::shadercompiler
             bool depth = false;
             // A temp whose x is all bits set where this place is written; -1 when it is always written.
             i32 cond = -1;
+            // A conditional place takes this part of the value (an element of an array may span several registers).
+            u8 part = 0;
         };
 
         struct Value
@@ -321,6 +323,8 @@ namespace helix::shadercompiler
 
             u32 RegisterCount(Type t) const
             {
+                if (t.base == BaseType::Array)
+                    return m.arrays[t.structIndex].length * RegisterCount(m.arrays[t.structIndex].element);
                 if (t.base == BaseType::Struct)
                 {
                     u32 n = 0;
@@ -334,7 +338,12 @@ namespace helix::shadercompiler
             // The scalar and vector pieces a type is stored as, one register each; matrices by column.
             void Leaves(Type t, Array<Type>& out) const
             {
-                if (t.base == BaseType::Struct)
+                if (t.base == BaseType::Array)
+                {
+                    for (u32 i = 0; i < m.arrays[t.structIndex].length; i++)
+                        Leaves(m.arrays[t.structIndex].element, out);
+                }
+                else if (t.base == BaseType::Struct)
                 {
                     for (const StructField& f : m.structs[t.structIndex].fields)
                         Leaves(f.type, out);
@@ -394,7 +403,7 @@ namespace helix::shadercompiler
                             Store(d, v.parts[i]);
                         continue;
                     }
-                    const Src& value = v.parts[0];
+                    const Src& value = v.parts[d.part < v.parts.Size() ? d.part : 0];
                     Src current;
                     current.reg = d.reg;
                     current.count = d.count;
@@ -451,6 +460,39 @@ namespace helix::shadercompiler
                     Array<Dst> whole;
                     if (!Place(in, e.a, whole))
                         return false;
+                    Type base = in.fn->exprs[e.a].type;
+                    if (base.base == BaseType::Array)
+                    {
+                        // An element is a run of registers; at a computed index every element is written where the index names it.
+                        u32 per = RegisterCount(e.type), count = m.arrays[base.structIndex].length;
+                        const Expr& constant = in.fn->exprs[e.b];
+                        if (constant.kind == ExprKind::ConstInt)
+                        {
+                            u32 k = Min(u32(constant.integer), count - 1);
+                            for (u32 j = 0; j < per; j++)
+                                out.Push(whole[k * per + j]);
+                            return true;
+                        }
+                        Value position;
+                        if (!Eval(in, e.b, position))
+                            return false;
+                        Src i = Scalar(position.parts[0]);
+                        for (u32 k = 0; k < count; k++)
+                        {
+                            Src match = Emit(kIeq, 1, i, ImmI(k), false);
+                            for (u32 j = 0; j < per; j++)
+                            {
+                                Dst d = whole[k * per + j];
+                                Src cond = match;
+                                if (d.cond >= 0)
+                                    cond = Emit(kAnd, 1, match, Condition(d), false);
+                                d.cond = i32(cond.reg);
+                                d.part = u8(j);
+                                out.Push(d);
+                            }
+                        }
+                        return true;
+                    }
                     bool matrix = in.fn->exprs[e.a].type.IsMatrix();
                     auto element = [&](u32 k) {
                         if (matrix)
@@ -1355,6 +1397,30 @@ namespace helix::shadercompiler
                     }
                     if (!Eval(in, e.a, whole) || !Eval(in, e.b, index))
                         return false;
+                    if (whole.type.base == BaseType::Array)
+                    {
+                        // Registers cannot be indexed: a computed index picks each register of the element with conditional moves.
+                        u32 per = RegisterCount(e.type), count = m.arrays[whole.type.structIndex].length;
+                        const Src& idx = index.parts[0];
+                        if (idx.kind == Src::Immediate)
+                        {
+                            u32 k = Min(idx.imm[idx.Component(0)], count - 1);
+                            for (u32 j = 0; j < per; j++)
+                                out.parts.Push(whole.parts[k * per + j]);
+                            return true;
+                        }
+                        Array<Src> matches;
+                        for (u32 k = 1; k < count; k++)
+                            matches.Push(Emit(kIeq, 1, idx, ImmI(k), false));
+                        for (u32 j = 0; j < per; j++)
+                        {
+                            Src picked = whole.parts[j];
+                            for (u32 k = 1; k < count; k++)
+                                picked = Emit(kMovc, picked.count, matches[k - 1], whole.parts[k * per + j], picked, picked.isFloat);
+                            out.parts.Push(picked);
+                        }
+                        return true;
+                    }
                     bool matrix = whole.type.IsMatrix();
                     u32 elements = matrix ? whole.type.cols : whole.type.rows;
                     auto element = [&](u32 i) { return matrix ? whole.parts[i] : Pick(whole.parts[0], i); };

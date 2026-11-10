@@ -14,6 +14,14 @@ namespace helix::shadercompiler
 
     inline UniformLayout Std140(const Module& m, Type t)
     {
+        if (t.base == BaseType::Array)
+        {
+            // Every element starts on 16 bytes.
+            const ArrayType& a = m.arrays[t.structIndex];
+            UniformLayout e = Std140(m, a.element);
+            u32 stride = u32(AlignUp(e.size, 16));
+            return {Max(e.align, 16u), stride * a.length};
+        }
         if (t.base == BaseType::Struct)
         {
             u32 offset = 0, align = 16;
@@ -35,6 +43,8 @@ namespace helix::shadercompiler
     // Size of the type as C# lays it out: fields in order, four bytes per component.
     inline u32 SequentialSize(const Module& m, Type t)
     {
+        if (t.base == BaseType::Array)
+            return m.arrays[t.structIndex].length * SequentialSize(m, m.arrays[t.structIndex].element);
         if (t.base != BaseType::Struct)
             return 4u * t.rows * t.cols;
         u32 size = 0;
@@ -46,6 +56,12 @@ namespace helix::shadercompiler
     // std430, the layout of storage buffer elements: like std140, but structs and arrays are not rounded up to 16 bytes.
     inline UniformLayout Std430(const Module& m, Type t)
     {
+        if (t.base == BaseType::Array)
+        {
+            const ArrayType& a = m.arrays[t.structIndex];
+            UniformLayout e = Std430(m, a.element);
+            return {e.align, u32(AlignUp(e.size, e.align)) * a.length};
+        }
         if (t.base == BaseType::Struct)
         {
             u32 offset = 0, align = 4;
@@ -65,6 +81,18 @@ namespace helix::shadercompiler
     // at the same place in C#, in std430 and packed: no three component vectors or bools, no holes.
     inline bool CheckBufferLayout(const Module& m, Type t, StringView path, String& error)
     {
+        if (t.base == BaseType::Array)
+        {
+            const ArrayType& a = m.arrays[t.structIndex];
+            UniformLayout e = Std430(m, a.element);
+            if (u32(AlignUp(e.size, e.align)) != SequentialSize(m, a.element))
+            {
+                error = Format("buffer array {} has elements of {} bytes in C# but {} on the GPU; pad the element", path, SequentialSize(m, a.element),
+                               u32(AlignUp(e.size, e.align)));
+                return false;
+            }
+            return CheckBufferLayout(m, a.element, Format("{}[0]", path), error);
+        }
         if (t.base == BaseType::Struct)
         {
             u32 offset = 0;
@@ -135,6 +163,21 @@ namespace helix::shadercompiler
             }
             if (f.type.base == BaseType::Struct && !CheckUniformLayout(m, f.type, name, std140, sequential, error))
                 return false;
+            if (f.type.base == BaseType::Array)
+            {
+                // Elements lie 16 bytes apart on the GPU and back to back in C#.
+                const ArrayType& a = m.arrays[f.type.structIndex];
+                u32 stride = u32(AlignUp(Std140(m, a.element).size, 16)), size = SequentialSize(m, a.element);
+                if (stride != size)
+                {
+                    error = Format("uniform array {} has elements of {} bytes in C# but {} on the GPU; use float4 or matrix elements, or pad the element to a "
+                                   "multiple of 16 bytes",
+                                   name, size, stride);
+                    return false;
+                }
+                if (a.element.base == BaseType::Struct && !CheckUniformLayout(m, a.element, Format("{}[0]", name), std140, sequential, error))
+                    return false;
+            }
             std140 += l.size;
             sequential += SequentialSize(m, f.type);
         }

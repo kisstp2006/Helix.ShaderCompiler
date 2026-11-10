@@ -22,6 +22,8 @@ namespace helix::shadercompiler
         Buffer,
         // A storage texture a shader writes: a texel is the Index expression of the texture with an int2.
         Image,
+        // A fixed size array ([InlineArray]); structIndex is its index in Module::arrays, an element is an Index expression.
+        Array,
     };
 
     // Scalars are 1x1, vectors rows x 1, matrices rows x cols (square, column major).
@@ -38,6 +40,7 @@ namespace helix::shadercompiler
         static constexpr Type Vector(BaseType b, u32 n) { return {b, u8(n), 1, 0}; }
         static constexpr Type Matrix(u32 n) { return {BaseType::Float, u8(n), u8(n), 0}; }
         static constexpr Type Struct(u32 index) { return {BaseType::Struct, 1, 1, u16(index)}; }
+        static constexpr Type ArrayOf(u32 index) { return {BaseType::Array, 1, 1, u16(index)}; }
 
         constexpr bool operator==(const Type&) const = default;
         constexpr bool IsVoid() const { return base == BaseType::Void; }
@@ -81,6 +84,12 @@ namespace helix::shadercompiler
         Semantic semantic = Semantic::None;
         u32 semanticIndex = 0;
         bool flat = false;
+    };
+
+    struct ArrayType
+    {
+        Type element;
+        u32 length = 0;
     };
 
     struct StructType
@@ -292,6 +301,8 @@ namespace helix::shadercompiler
     {
         Stage stage = Stage::Vertex;
         Array<StructType> structs;
+        // Arrays come before the structs and arrays that contain them.
+        Array<ArrayType> arrays;
         Array<Global> globals;
         // Callees come before their callers; the entry point is last.
         Array<Function> functions;

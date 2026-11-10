@@ -3,6 +3,8 @@
     <TargetFramework>net11.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
+    <!-- Only for the fixed buffer the compiler must refuse. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ImplicitUsings>disable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);CS8981;CS0649;CS0414</NoWarn>

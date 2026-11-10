@@ -18,6 +18,24 @@ namespace helix::shadercompiler
                     Members(m, f.type, name, offset, out);
                     continue;
                 }
+                if (f.type.base == BaseType::Array)
+                {
+                    // Elements as name[i]; the layout check made them back to back.
+                    const ArrayType& a = m.arrays[f.type.structIndex];
+                    for (u32 i = 0; i < a.length; i++)
+                    {
+                        String element = Format("{}[{}]", name, i);
+                        if (a.element.base == BaseType::Struct)
+                            Members(m, a.element, element, offset, out);
+                        else
+                        {
+                            u32 size = SequentialSize(m, a.element);
+                            out.Push({Move(element), a.element, offset, size});
+                            offset += size;
+                        }
+                    }
+                    continue;
+                }
                 u32 size = SequentialSize(m, f.type);
                 out.Push({Move(name), f.type, offset, size});
                 offset += size;

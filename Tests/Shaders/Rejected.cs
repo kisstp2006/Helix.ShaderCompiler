@@ -58,6 +58,37 @@ public static class Rejected
     [return: Target(0)]
     public static float4 HalfUniform() => (float4)halfBlock.tint;
 
+    [System.Runtime.CompilerServices.InlineArray(3)]
+    public struct Scalars
+    {
+        private float element;
+    }
+
+    public struct ScalarBlock
+    {
+        public Scalars values;
+    }
+
+    [Uniform(6)] public static ScalarBlock scalarBlock;
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 ScalarArray() => new float4(scalarBlock.values[1]);
+
+    public unsafe struct FixedWeights
+    {
+        public fixed float values[4];
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static unsafe float4 FixedBuffer([Location(0)] float2 uv)
+    {
+        FixedWeights w = default;
+        w.values[0] = uv.x;
+        return new float4(w.values[0]);
+    }
+
     [VertexShader]
     [return: Position]
     public static float4 HalfInput([Location(0)] half2 p) => new float4((float2)p, 0.0f, 1.0f);
