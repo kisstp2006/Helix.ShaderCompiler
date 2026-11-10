@@ -1,4 +1,5 @@
 #include <Helix/ShaderCompiler/Frontend/Frontend.h>
+#include <Helix/ShaderCompiler/Transforms/Simplify.h>
 #include <Helix/ShaderCompiler/Frontend/Implementation/Flow.h>
 
 #include <Helix/Core/Strings/Format.h>
@@ -64,7 +65,9 @@ namespace helix::shadercompiler
             Module& m;
             String& error;
 
-            Translator(const Assembly& assembly, Module& module, String& e) : a(assembly), m(module), error(e) {}
+            const TranslateOptions& options;
+
+            Translator(const Assembly& assembly, Module& module, String& e, const TranslateOptions& o) : a(assembly), m(module), error(e), options(o) {}
 
             Array<u32> structRows;
             struct FieldGlobal
@@ -181,6 +184,13 @@ namespace helix::shadercompiler
                 return i32(m.structs.Size() - 1);
             }
 
+            // Enums are their integer value.
+            bool IsEnum(u32 typeRow) const
+            {
+                StringView ns, name;
+                return a.TypeName(a.TypeDef(typeRow).extends, ns, name) && ns == "System" && name == "Enum";
+            }
+
             bool MapType(const TypeSig& sig, const Method* method, Type& out, bool& byRef, StringView where)
             {
                 switch (sig.kind)
@@ -208,6 +218,11 @@ namespace helix::shadercompiler
                         return LibraryType(name, out);
                     if (!sig.token.Is(Table::TypeDef))
                         return false;
+                    if (IsEnum(sig.token.Row()))
+                    {
+                        out = kInt;
+                        return true;
+                    }
                     i32 index = StructFor(sig.token.Row(), where);
                     if (index < 0)
                         return false;
@@ -487,8 +502,27 @@ namespace helix::shadercompiler
                 FieldInfo field = a.Field(row);
                 if (Has(parent, "KeywordAttribute"))
                 {
-                    // Keywords are constants of the variant; variants are not selected yet, every keyword is off.
-                    out = {ConstInt(mt, 0, kBool), false};
+                    // Keywords are constants of the variant.
+                    TypeSig sig;
+                    bool isBool = ParseFieldSignature(field.signature, sig) && sig.kind == ElementType::Boolean;
+                    if (!isBool && !(sig.kind == ElementType::ValueType && sig.token.Is(Table::TypeDef) && IsEnum(sig.token.Row())))
+                        return Fail(mt.name, Format("keyword {} must be a bool or an enum declared in the shader assembly", field.name));
+                    i64 value = 0;
+                    for (const KeywordValue& k : options.keywords)
+                        if (k.name == field.name)
+                            value = isBool ? i64(k.value != 0) : k.value;
+                    bool known = false;
+                    for (const KeywordUse& use : m.keywords)
+                        known = known || use.name == field.name;
+                    if (!known)
+                    {
+                        KeywordUse use;
+                        use.name = field.name;
+                        use.isEnum = !isBool;
+                        use.value = value;
+                        m.keywords.Push(Move(use));
+                    }
+                    out = {ConstInt(mt, value, isBool ? kBool : kInt), false};
                     return true;
                 }
                 for (const FieldGlobal& g : fieldGlobals)
@@ -1232,12 +1266,12 @@ namespace helix::shadercompiler
         };
     }
 
-    bool TranslateEntryPoint(const Assembly& assembly, u32 method, Stage stage, Module& out, String& error)
+    bool TranslateEntryPoint(const Assembly& assembly, u32 method, Stage stage, Module& out, String& error, const TranslateOptions& options)
     {
         out = Module();
         out.stage = stage;
         error.Clear();
-        Translator t(assembly, out, error);
+        Translator t(assembly, out, error, options);
         Array<Type> none;
         i32 index = t.FunctionFor(method, none, assembly.Method(method).name);
         if (index < 0)
@@ -1255,6 +1289,7 @@ namespace helix::shadercompiler
                 bool flat;
                 out.returnSemantic = t.ReadSemantic(Token(Table::Param, p), out.returnSemanticIndex, flat);
             }
+        Simplify(out);
         return true;
     }
 }

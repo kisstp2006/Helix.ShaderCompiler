@@ -13,6 +13,7 @@ Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50, GLSL
 | `Source/Helix/ShaderCompiler/Assembly/` | `Assembly` (PE file, CLI metadata, method bodies, custom attributes), signatures, IL instruction decoder |
 | `Source/Helix/ShaderCompiler/IR/` | The module a shader is translated to: types, structs, expressions, structured statements, functions, resources |
 | `Source/Helix/ShaderCompiler/Frontend/` | `TranslateEntryPoint`: IL of an entry point and everything it calls to a module |
+| `Source/Helix/ShaderCompiler/Transforms/` | `Simplify`: constant folding, constant locals, removal of code, functions and resources that cannot be reached |
 | `Source/Helix/ShaderCompiler/Backends/` | `EmitGlsl`: a module to GLSL source with its binding table; `EmitDxbc`: a module to a Direct3D bytecode container |
 | `Tests/Shaders/` | C# test shaders, built with the .NET SDK during the CMake build and embedded into the test program |
 | `Tests/Oracle/` | C# program that runs the test shaders on the CPU and writes the images the GPU must reproduce |
@@ -39,6 +40,23 @@ DxbcShader code;
 EmitDxbc(module, code, error);
 // code.bytes goes to ID3D11Device::CreatePixelShader as it is.
 ```
+
+## Keywords and variants
+
+A `[Keyword]` field (a `bool` or an enum of the shader assembly) is a constant while one variant is compiled:
+
+```cpp
+const KeywordValue keywords[] = {{"Fog", 1}, {"Quality", 2}};
+TranslateOptions options;
+options.keywords = keywords;
+TranslateEntryPoint(assembly, method, Stage::Fragment, module, error, options);
+// module.keywords: the keywords this code read, with the values used.
+```
+
+Keywords that are not listed are off. `if (Fog)`, `switch (Quality)` and conditions built from them are decided at compile
+time: the module holds only the branch taken, and functions, uniform blocks and textures used by other variants only are
+not in it. Names that the shader does not have are ignored, so one global keyword set can be passed to every shader.
+`module.keywords` tells which keywords can change the code at all; variants that differ in other keywords are identical.
 
 The C# method
 
@@ -96,7 +114,7 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
 
 Not available, each reported with the method name and the reason: classes and anything allocated, recursion, exceptions,
 `goto`, 64 bit integers, storage buffers and compute shaders (not implemented yet), calls into other libraries.
-Keywords are always off for now; variants are not selected yet.
+Dynamic keywords (decided at run time) are not available yet.
 
 ## Conventions of the generated GLSL
 
@@ -127,12 +145,14 @@ Not written yet for Direct3D: front facing input, depth output, writing a vector
 ## Tests
 
 - Assembly reader: tables, signatures, instructions and attributes of real assemblies, and 400 randomly damaged files.
-- Execution: 16 C# shaders (arithmetic, branches, loops, `continue`, early returns from nested loops, switch, functions
+- Execution: 17 C# shaders (arithmetic, branches, loops, `continue`, early returns from nested loops, switch, functions
   with `ref`/`out` and generics, library functions, integers, matrices, uniforms, textures, discard, bool vectors, nested
   structs) run on the CPU as C# and on the GPU as generated GLSL 3.30 and 4.50 and as Direct3D bytecode; the images must
   agree within 2/255. They run on the OpenGL device and on every Direct3D 11 adapter the machine offers.
 - Direct3D container: chunks, sizes, signatures and registers of both stages, and that output is deterministic.
 - GLSL ES 3.00 output is checked as text only; it is not executed yet.
+- Keywords: a case with a bool and an enum keyword runs in all six combinations on the CPU and the GPU; the text tests
+  check that the code, the helper function and the texture of other variants are gone.
 - Rejected shaders: recursion, a uniform struct whose layout differs between C# and std140, a missing stage attribute.
 
 `HELIX_PRINT_SHADERS=<case name>` prints the generated fragment shader of one execution case and writes its bytecode to

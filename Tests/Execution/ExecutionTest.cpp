@@ -165,6 +165,27 @@ void RunCases(Device& d, bool direct3d)
             bind.SetTexture(slot, textures.Back(), samplers.Back());
         }
 
+        // The variant of the case: its keyword values, also shown in messages.
+        Array<String> keywordNames;
+        Array<KeywordValue> keywords;
+        u32 keywordCount = r.U32();
+        String label = name;
+        for (u32 k = 0; k < keywordCount; k++)
+        {
+            u32 length = 0;
+            if (const u8* p = r.Bytes(2))
+                length = u32(p[0]) | (u32(p[1]) << 8);
+            const u8* text = r.Bytes(length);
+            HX_REQUIRE(text != nullptr);
+            keywordNames.Push(String(StringView(reinterpret_cast<const char*>(text), length)));
+            keywords.Push({StringView(), i64(i32(r.U32()))});
+            label = helix::Format("{} {}={}", label, keywordNames.Back(), keywords.Back().value);
+        }
+        for (usize k = 0; k < keywords.Size(); k++)
+            keywords[k].name = keywordNames[k];
+        TranslateOptions options;
+        options.keywords = Span<const KeywordValue>(keywords.Data(), keywords.Size());
+
         u32 type = a.FindType("Helix.ShaderTests.Cases", name);
         HX_REQUIRE(type != 0);
         bool caseOk = true;
@@ -175,14 +196,14 @@ void RunCases(Device& d, bool direct3d)
             DxbcShader vertexCode, fragmentCode;
             String error;
             bool compiled = TranslateEntryPoint(a, a.FindMethod(fullscreen, "Vertex"), Stage::Vertex, vertexModule, error) &&
-                            TranslateEntryPoint(a, a.FindMethod(type, "Fragment"), Stage::Fragment, fragmentModule, error);
+                            TranslateEntryPoint(a, a.FindMethod(type, "Fragment"), Stage::Fragment, fragmentModule, error, options);
             if (compiled && direct3d)
                 compiled = EmitDxbc(vertexModule, vertexCode, error) && EmitDxbc(fragmentModule, fragmentCode, error);
             else if (compiled)
                 compiled = EmitGlsl(vertexModule, targets[version], vertexShader, error) && EmitGlsl(fragmentModule, targets[version], fragmentShader, error);
             if (!compiled)
             {
-                std::printf("    %s: %s\n", name.CStr(), error.CStr());
+                std::printf("    %s: %s\n", label.CStr(), error.CStr());
                 caseOk = false;
                 break;
             }
@@ -218,7 +239,7 @@ void RunCases(Device& d, bool direct3d)
             PipelineHandle pipeline = vs.IsValid() && fs.IsValid() ? d.CreatePipeline(pd) : PipelineHandle{};
             if (!pipeline.IsValid())
             {
-                std::printf("    %s: the generated shader was rejected by the driver:\n%s\n", name.CStr(), fragmentShader.source.CStr());
+                std::printf("    %s: the generated shader was rejected by the driver:\n%s\n", label.CStr(), fragmentShader.source.CStr());
                 caseOk = false;
             }
             else
@@ -254,7 +275,7 @@ void RunCases(Device& d, bool direct3d)
                 if (wrong)
                 {
                     u32 p = firstWrong / 4;
-                    std::printf("    %s (%s): %u channels differ, worst by %u; first at pixel (%u, %u) channel %u: GPU %u, CPU %u\n", name.CStr(),
+                    std::printf("    %s (%s): %u channels differ, worst by %u; first at pixel (%u, %u) channel %u: GPU %u, CPU %u\n", label.CStr(),
                                 direct3d ? "DXBC" : version ? "GLSL 450" : "GLSL 330", wrong, worst, p % size, p / size, firstWrong % 4, u32(pixels[firstWrong]),
                                 u32(expected[firstWrong]));
                     std::printf("%s\n", fragmentShader.source.CStr());

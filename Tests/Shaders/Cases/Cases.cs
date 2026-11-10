@@ -387,6 +387,61 @@ public static class Textures
     }
 }
 
+public enum Detail
+{
+    Low,
+    Medium,
+    High,
+}
+
+/// <summary>Runs once per combination of its keywords; fields are not readonly so the oracle can set them.</summary>
+public static class Keywords
+{
+    [Keyword] public static bool Stripes;
+    [Keyword(KeywordScope.Global)] public static Detail Quality;
+
+    // Only the Stripes variants read the texture, only the High variants call Fine.
+    [Texture(0)] public static Texture2D pattern;
+    [Sampler(0)] public static SamplerState patternSampler;
+
+    public static void Setup()
+    {
+        pattern = Texture2D.FromPixels(new float4[] { new(1, 1, 1, 1), new(0, 0, 0, 1), new(0, 0, 0, 1), new(1, 1, 1, 1) }, 2, 2);
+        patternSampler = new SamplerState { Filter = SamplerFilter.Nearest, Address = SamplerAddress.Repeat };
+    }
+
+    static float Fine(float2 uv)
+    {
+        float sum = 0.0f;
+        for (int i = 1; i <= 4; i++)
+            sum += Frac(uv.x * i) * 0.25f;
+        return sum;
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        float3 color = new float3(uv, 0.25f);
+        if (Stripes)
+            color.xy *= pattern.Sample(patternSampler, uv * 2.0f).x * 0.5f + 0.5f;
+        switch (Quality)
+        {
+            case Detail.Low:
+                break;
+            case Detail.Medium:
+                color.z += 0.25f;
+                break;
+            default:
+                color.z = Fine(uv);
+                break;
+        }
+        if (Stripes && Quality == Detail.High)
+            color.x = 1.0f - color.x;
+        return new float4(color, Quality != Detail.Low || Stripes ? 1.0f : 0.5f);
+    }
+}
+
 public static class Discards
 {
     [FragmentShader]

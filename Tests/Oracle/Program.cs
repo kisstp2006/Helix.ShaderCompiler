@@ -14,7 +14,8 @@ namespace Helix.ShaderOracle;
 ///
 /// File layout (little endian): u32 size, u32 caseCount, then per case: u16 name length, name, size * size RGBA8 pixels
 /// (rows top first), u32 uniformCount { u32 slot, u32 byteCount, bytes }, u32 textureCount { u32 slot, u32 width,
-/// u32 height, u32 filter, u32 address, RGBA8 pixels }.
+/// u32 height, u32 filter, u32 address, RGBA8 pixels }, u32 keywordCount { u16 name length, name, i32 value }.
+/// A case with [Keyword] fields is written once per combination of their values.
 /// </summary>
 internal static class Program
 {
@@ -30,6 +31,18 @@ internal static class Program
         w.Write(Quantize(c.y));
         w.Write(Quantize(c.z));
         w.Write(Quantize(c.w));
+    }
+
+    // Every combination of the values the keyword fields of a case can take; one empty combination without keywords.
+    private static List<(FieldInfo field, int value)[]> Variants(Type type)
+    {
+        List<(FieldInfo field, int value)[]> variants = new() { Array.Empty<(FieldInfo, int)>() };
+        foreach (FieldInfo f in type.GetFields(BindingFlags.Public | BindingFlags.Static).Where(f => f.GetCustomAttribute<KeywordAttribute>() != null))
+        {
+            int[] values = f.FieldType.IsEnum ? Enum.GetValues(f.FieldType).Cast<object>().Select(Convert.ToInt32).ToArray() : new[] { 0, 1 };
+            variants = variants.SelectMany(v => values.Select(value => v.Append((f, value)).ToArray())).ToList();
+        }
+        return variants;
     }
 
     private static int Main(string[] args)
@@ -50,10 +63,14 @@ internal static class Program
 
         using BinaryWriter w = new(File.Create(args[0]));
         w.Write((uint)Size);
-        w.Write((uint)cases.Count);
-        foreach ((Type type, MethodInfo fragment) in cases)
+        List<(Type type, MethodInfo fragment, (FieldInfo field, int value)[] keywords)> runs =
+            cases.SelectMany(c => Variants(c.type).Select(v => (c.type, c.fragment, v))).ToList();
+        w.Write((uint)runs.Count);
+        foreach ((Type type, MethodInfo fragment, (FieldInfo field, int value)[] keywords) in runs)
         {
             type.GetMethod("Setup", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+            foreach ((FieldInfo field, int value) in keywords)
+                field.SetValue(null, field.FieldType.IsEnum ? Enum.ToObject(field.FieldType, value) : value != 0);
             byte[] name = System.Text.Encoding.ASCII.GetBytes(type.Name);
             w.Write((ushort)name.Length);
             w.Write(name);
@@ -98,8 +115,17 @@ internal static class Program
                 foreach (float4 pixel in texture.Pixels!)
                     WritePixel(w, pixel);
             }
+
+            w.Write((uint)keywords.Length);
+            foreach ((FieldInfo field, int value) in keywords)
+            {
+                byte[] keyword = System.Text.Encoding.ASCII.GetBytes(field.Name);
+                w.Write((ushort)keyword.Length);
+                w.Write(keyword);
+                w.Write(value);
+            }
         }
-        Console.WriteLine($"{cases.Count} cases written to {args[0]}");
+        Console.WriteLine($"{runs.Count} runs of {cases.Count} cases written to {args[0]}");
         return 0;
     }
 }

@@ -230,6 +230,14 @@ namespace helix::shadercompiler
     };
 
     // One compiled entry point with everything it reaches.
+    // A keyword the translated code read, with the value this variant was compiled for.
+    struct KeywordUse
+    {
+        String name;
+        bool isEnum = false;
+        i64 value = 0;
+    };
+
     struct Module
     {
         Stage stage = Stage::Vertex;
@@ -241,5 +249,7 @@ namespace helix::shadercompiler
         // Role of the entry point's return value when it is not a struct.
         Semantic returnSemantic = Semantic::None;
         u32 returnSemanticIndex = 0;
+        // Keywords that decide this code; a variant differs from another only when one of these differs.
+        Array<KeywordUse> keywords;
     };
 }
