@@ -2013,6 +2013,8 @@ namespace helix::shadercompiler
                     if (p.mode != ParamMode::In)
                         return Fail(Format("entry point parameter {} is ref or out; return the outputs instead", p.name));
                     Array<Dst> places = Places(Variable(p.type, entry.paramReg[i]));
+                    if (places.Empty())
+                        return Fail(Format("entry point parameter {} has no value to read", p.name));
                     if (p.type.base == BaseType::Struct)
                     {
                         u32 part = 0;
