@@ -248,25 +248,40 @@ namespace helix::shadercompiler
                 return true;
             }
 
-            bool Pass(ShaderDescription& shader, u32 typeRow, const Array<Attribute>& attributes, const Attribute& attribute)
+            // Render state of a pass or SubShader: what its attributes set, the rest from `base` (the SubShader of a pass).
+            bool State(const ShaderDescription& shader, StringView owner, const Array<Attribute>& attributes, const Attribute& attribute,
+                       const RenderState& base, RenderState& s)
             {
-                ShaderPass pass;
-                pass.type = typeRow;
-                pass.name = attribute.fixed.Empty() ? StringView() : attribute.fixed[0].text;
-                pass.lightMode = attribute.Text("LightMode");
-                Tags(attributes, pass.tags);
-                RenderState& s = pass.state;
-                s.cull = CullMode(attribute.Integer("Cull", i64(CullMode::Back)));
-                s.zWrite = attribute.Integer("ZWrite", 1) != 0;
-                s.zTest = CompareFunction(attribute.Integer("ZTest", i64(CompareFunction::LessEqual)));
-                s.zClip = attribute.Integer("ZClip", 1) != 0;
-                s.offsetFactor = attribute.Number("OffsetFactor", 0);
-                s.offsetUnits = attribute.Number("OffsetUnits", 0);
-                s.colorMask = u8(attribute.Integer("ColorMask", 15) & 15);
-                s.alphaToMask = attribute.Integer("AlphaToMask", 0) != 0;
-                s.conservative = attribute.Integer("Conservative", 0) != 0;
+                s = base;
+                s.cull = CullMode(attribute.Integer("Cull", i64(base.cull)));
+                s.zWrite = attribute.Integer("ZWrite", base.zWrite ? 1 : 0) != 0;
+                s.zTest = CompareFunction(attribute.Integer("ZTest", i64(base.zTest)));
+                s.zClip = attribute.Integer("ZClip", base.zClip ? 1 : 0) != 0;
+                s.offsetFactor = attribute.Number("OffsetFactor", base.offsetFactor);
+                s.offsetUnits = attribute.Number("OffsetUnits", base.offsetUnits);
+                s.colorMask = u8(attribute.Integer("ColorMask", base.colorMask) & 15);
+                s.alphaToMask = attribute.Integer("AlphaToMask", base.alphaToMask ? 1 : 0) != 0;
+                s.conservative = attribute.Integer("Conservative", base.conservative ? 1 : 0) != 0;
+                // Blending and stencil of its own replace those of the SubShader as a whole.
+                bool ownBlend = false, ownStencil = false;
                 for (const Attribute& b : attributes)
                 {
+                    if (b.name == "BlendAttribute" && !ownBlend)
+                    {
+                        s.blend.Clear();
+                        ownBlend = true;
+                    }
+                    if (b.name == "StencilAttribute" && !ownStencil)
+                    {
+                        RenderState none;
+                        s.stencil = false;
+                        s.stencilReference = none.stencilReference;
+                        s.stencilReadMask = none.stencilReadMask;
+                        s.stencilWriteMask = none.stencilWriteMask;
+                        s.stencilFront = none.stencilFront;
+                        s.stencilBack = none.stencilBack;
+                        ownStencil = true;
+                    }
                     if (b.name == "BlendAttribute" && (b.fixed.Size() == 2 || b.fixed.Size() == 4))
                     {
                         BlendState blend;
@@ -279,7 +294,7 @@ namespace helix::shadercompiler
                         blend.operationAlpha = BlendOperation(b.Integer("OperationAlpha", 0));
                         for (const BlendState& other : s.blend)
                             if (other.target == blend.target)
-                                return Fail(shader, Format("pass {} sets the blending of one target twice", pass.name));
+                                return Fail(shader, Format("{} sets the blending of one target twice", owner));
                         s.blend.Push(blend);
                     }
                     else if (b.name == "StencilAttribute")
@@ -301,6 +316,20 @@ namespace helix::shadercompiler
                             s.stencilBack = face;
                     }
                 }
+                return true;
+            }
+
+            bool Pass(ShaderDescription& shader, u32 typeRow, const Array<Attribute>& attributes, const Attribute& attribute, const RenderState& base,
+                      u32 subShader)
+            {
+                ShaderPass pass;
+                pass.type = typeRow;
+                pass.subShader = subShader;
+                pass.name = attribute.fixed.Empty() ? StringView() : attribute.fixed[0].text;
+                pass.lightMode = attribute.Text("LightMode");
+                Tags(attributes, pass.tags);
+                if (!State(shader, Format("pass {}", pass.name), attributes, attribute, base, pass.state))
+                    return false;
                 TypeDefInfo type = a.TypeDef(typeRow);
                 for (u32 m = type.methodBegin; m < type.methodEnd; m++)
                 {
@@ -317,9 +346,25 @@ namespace helix::shadercompiler
                     return Fail(shader, Format("the pass class {} has no name", type.name));
                 if (!pass.vertex || !pass.fragment)
                     return Fail(shader, Format("pass {} needs a [VertexShader] and a [FragmentShader] method", pass.name));
-                if (shader.FindPass(pass.name))
-                    return Fail(shader, Format("pass {} is declared twice", pass.name));
+                for (const ShaderPass& other : shader.passes)
+                    if (other.subShader == subShader && other.name == pass.name)
+                        return Fail(shader, Format("pass {} is declared twice", pass.name));
                 shader.passes.Push(Move(pass));
+                return true;
+            }
+
+            // The pass classes nested in a SubShader class (or in the definition), in source order.
+            bool Passes(ShaderDescription& shader, u32 ownerRow, const RenderState& base, u32 subShader)
+            {
+                // Nested types follow their enclosing type in the table, in source order.
+                for (u32 nested = 1; nested <= a.RowCount(Table::TypeDef); nested++)
+                {
+                    if (a.TypeDef(nested).enclosingType != ownerRow)
+                        continue;
+                    Array<Attribute> onType = Attributes(a, Token(Table::TypeDef, nested));
+                    if (const Attribute* pass = Find(onType, "PassAttribute"); pass && !Pass(shader, nested, onType, *pass, base, subShader))
+                        return false;
+                }
                 return true;
             }
 
@@ -345,13 +390,37 @@ namespace helix::shadercompiler
                     else if (!field.IsStatic() && (field.flags & 0x7) == 0x6 && !Property(shader, field, onField))
                         return false;
                 }
-                // Nested types follow their enclosing type in the table, in source order.
+                // SubShader classes, or the passes of the definition as one SubShader.
+                bool direct = false;
                 for (u32 nested = 1; nested <= a.RowCount(Table::TypeDef); nested++)
                 {
                     if (a.TypeDef(nested).enclosingType != typeRow)
                         continue;
                     Array<Attribute> onType = Attributes(a, Token(Table::TypeDef, nested));
-                    if (const Attribute* pass = Find(onType, "PassAttribute"); pass && !Pass(shader, nested, onType, *pass))
+                    direct = direct || Find(onType, "PassAttribute") != nullptr;
+                    const Attribute* sub = Find(onType, "SubShaderAttribute");
+                    if (!sub)
+                        continue;
+                    ShaderSubShader s;
+                    s.type = nested;
+                    s.lod = i32(sub->Integer("LOD", 0));
+                    Tags(onType, s.tags);
+                    RenderState state;
+                    if (!State(shader, Format("SubShader {}", a.TypeDef(nested).name), onType, *sub, RenderState(), state))
+                        return false;
+                    shader.subShaders.Push(Move(s));
+                    if (!Passes(shader, nested, state, u32(shader.subShaders.Size() - 1)))
+                        return false;
+                }
+                if (direct && !shader.subShaders.Empty())
+                    return Fail(shader, "it has passes next to SubShader classes; put every pass into a SubShader");
+                if (shader.subShaders.Empty())
+                {
+                    ShaderSubShader s;
+                    s.lod = shader.lod;
+                    s.tags = shader.tags;
+                    shader.subShaders.Push(Move(s));
+                    if (!Passes(shader, typeRow, RenderState(), 0))
                         return false;
                 }
                 for (const ShaderProperty& p : shader.properties)

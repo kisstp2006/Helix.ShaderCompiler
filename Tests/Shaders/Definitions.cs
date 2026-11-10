@@ -81,7 +81,83 @@ public sealed class Glass : ShaderDefinition
     }
 }
 
+/// <summary>Two SubShaders: a detailed one whose passes take its render state, and a cheap one.</summary>
+[Shader("Tests/Layered")]
+public sealed class Layered : ShaderDefinition
+{
+    public static float4 Place(float2 p) => new float4(p, 0.0f, 1.0f);
+
+    [SubShader(LOD = 400, Cull = CullMode.Front, ZTest = CompareFunction.Less)]
+    [Tag("RenderType", "Opaque")]
+    [Blend(BlendFactor.One, BlendFactor.One)]
+    [Stencil(Reference = 2, Pass = StencilOperation.Replace)]
+    public static class Detailed
+    {
+        [Pass("Forward", LightMode = "ForwardBase")]
+        public static class Forward
+        {
+            [VertexShader]
+            [return: Position]
+            public static float4 Vertex([Location(0)] float2 p) => Place(p);
+
+            [FragmentShader]
+            [return: Target(0)]
+            public static float4 Fragment() => new float4(1.0f);
+        }
+
+        [Pass("Outline", Cull = CullMode.Back, ZWrite = false)]
+        [Blend(BlendFactor.SrcAlpha, BlendFactor.OneMinusSrcAlpha)]
+        public static class Outline
+        {
+            [VertexShader]
+            [return: Position]
+            public static float4 Vertex([Location(0)] float2 p) => Place(p * 1.25f);
+
+            [FragmentShader]
+            [return: Target(0)]
+            public static float4 Fragment() => new float4(0.0f, 0.0f, 0.0f, 1.0f);
+        }
+    }
+
+    [SubShader(LOD = 100)]
+    public static class Cheap
+    {
+        [Pass("Forward", Cull = CullMode.Off)]
+        public static class Forward
+        {
+            [VertexShader]
+            [return: Position]
+            public static float4 Vertex([Location(0)] float2 p) => Place(p);
+
+            [FragmentShader]
+            [return: Target(0)]
+            public static float4 Fragment() => new float4(0.5f);
+        }
+    }
+}
+
 // Definitions that cannot work; each is read on its own.
+[Shader("Tests/BadMix")]
+public sealed class BadMix : ShaderDefinition
+{
+    [SubShader]
+    public static class Group
+    {
+    }
+
+    [Pass("Loose")]
+    public static class Loose
+    {
+        [VertexShader]
+        [return: Position]
+        public static float4 Vertex([Location(0)] float2 p) => new float4(p, 0.0f, 1.0f);
+
+        [FragmentShader]
+        [return: Target(0)]
+        public static float4 Fragment() => new float4(1.0f);
+    }
+}
+
 [Shader("Tests/BadProperty")]
 public sealed class BadProperty : ShaderDefinition
 {

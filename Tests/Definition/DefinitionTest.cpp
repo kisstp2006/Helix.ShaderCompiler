@@ -122,6 +122,45 @@ HX_TEST(Definition, ReadsPassesWithRenderState)
              StringView(shader.source).Contains(".z = 1.0") && StringView(shader.source).Contains("hx_block_hx_keywords"));
 }
 
+HX_TEST(Definition, ReadsSubShaders)
+{
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    ShaderDescription layered, glass;
+    String error;
+    bool ok = ReadShaderDefinition(a, a.FindType("Helix.ShaderTests", "Layered"), layered, error);
+    if (!ok)
+        std::printf("    %s\n", error.CStr());
+    HX_REQUIRE(ok);
+    HX_REQUIRE(layered.subShaders.Size() == 2u && layered.passes.Size() == 3u);
+    HX_CHECK(layered.subShaders[0].lod == 400 && layered.subShaders[1].lod == 100 && FindTag(layered.subShaders[0].tags, "RenderType") &&
+             layered.subShaders[1].tags.Empty());
+    const ShaderPass& forward = layered.passes[0];
+    const ShaderPass& outline = layered.passes[1];
+    const ShaderPass& cheap = layered.passes[2];
+    HX_CHECK(forward.subShader == 0 && outline.subShader == 0 && cheap.subShader == 1);
+    // The detailed passes take the SubShader state unless they set their own.
+    HX_CHECK(forward.state.cull == CullMode::Front && forward.state.zTest == CompareFunction::Less && forward.state.zWrite);
+    HX_REQUIRE(forward.state.blend.Size() == 1u);
+    HX_CHECK(forward.state.blend[0].source == BlendFactor::One && forward.state.stencil && forward.state.stencilReference == 2);
+    HX_CHECK(outline.state.cull == CullMode::Back && !outline.state.zWrite && outline.state.zTest == CompareFunction::Less);
+    HX_REQUIRE(outline.state.blend.Size() == 1u);
+    HX_CHECK(outline.state.blend[0].source == BlendFactor::SrcAlpha && outline.state.stencil);
+    HX_CHECK(cheap.state.cull == CullMode::Off && cheap.state.zTest == CompareFunction::LessEqual && cheap.state.blend.Empty() && !cheap.state.stencil);
+    // Both SubShaders have a Forward pass; the first one is found.
+    HX_CHECK(layered.FindPass("Forward") == &forward);
+
+    // Without SubShader classes the passes form one SubShader with the LOD and tags of the shader.
+    HX_REQUIRE(ReadShaderDefinition(a, a.FindType("Helix.ShaderTests", "Glass"), glass, error));
+    HX_REQUIRE(glass.subShaders.Size() == 1u);
+    HX_CHECK(glass.subShaders[0].lod == 300 && glass.subShaders[0].tags.Size() == 2u && glass.subShaders[0].type == 0);
+
+    ShaderDescription bad;
+    HX_CHECK(!ReadShaderDefinition(a, a.FindType("Helix.ShaderTests", "BadMix"), bad, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("next to SubShader classes"));
+}
+
 HX_TEST(Definition, ReadsEveryShaderAndReportsBadOnes)
 {
     Assembly a;

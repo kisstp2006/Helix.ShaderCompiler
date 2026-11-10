@@ -80,10 +80,12 @@ TranslateEntryPoint(assembly, pass->fragment, Stage::Fragment, module, error, op
 
 A `ShaderDescription` holds the name, fallback, tags and LOD of the shader, its material properties (type, display name,
 range, default value or default texture, flags such as main texture or HDR, the keyword a toggle drives), its keywords
-(scope, shader feature, dynamic, the members of an enum keyword with their values) and its passes in source order with
-their render state and entry point methods. Declarations that cannot work are errors naming the shader and the member: a
-property type materials cannot hold, a pass without both entry points, a toggle naming a keyword the shader does not have,
-a name used twice.
+(scope, shader feature, dynamic, the members of an enum keyword with their values), its SubShaders (LOD, tags) and its
+passes in source order with their SubShader, render state and entry point methods. A pass takes the render state,
+blending and stencil of its `[SubShader]` class unless it sets its own; a definition without SubShader classes has one
+SubShader with the LOD and tags of the shader. Declarations that cannot work are errors naming the shader and the member:
+a property type materials cannot hold, a pass without both entry points, a toggle naming a keyword the shader does not
+have, a name used twice, passes next to SubShader classes.
 
 ## Variants and the cache
 

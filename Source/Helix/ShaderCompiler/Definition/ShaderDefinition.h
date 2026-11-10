@@ -109,6 +109,17 @@ namespace helix::shadercompiler
         RenderState state;
         // TypeDef row of the pass class and MethodDef rows of its entry points (0 when the pass has none).
         u32 type = 0, vertex = 0, fragment = 0;
+        // Index of its SubShader in ShaderDescription::subShaders.
+        u32 subShader = 0;
+    };
+
+    // A group of passes; the renderer takes the first SubShader whose LOD is within its limit.
+    struct ShaderSubShader
+    {
+        i32 lod = 0;
+        Array<ShaderTag> tags;
+        // TypeDef row of the SubShader class; 0 for the one the passes of a definition without SubShader classes form.
+        u32 type = 0;
     };
 
     struct ShaderDescription
@@ -118,10 +129,13 @@ namespace helix::shadercompiler
         Array<ShaderTag> tags;
         Array<ShaderProperty> properties;
         Array<ShaderKeyword> keywords;
-        // In the order the pass classes are written.
+        // At least one. Without SubShader classes the passes form one, with the LOD and tags of the shader.
+        Array<ShaderSubShader> subShaders;
+        // In the order the pass classes are written, SubShader after SubShader.
         Array<ShaderPass> passes;
         u32 type = 0;
 
+        // The first pass of that name: in the first SubShader that has one.
         const ShaderPass* FindPass(StringView passName) const;
         const ShaderProperty* FindProperty(StringView propertyName) const;
         const ShaderKeyword* FindKeyword(StringView keywordName) const;
@@ -129,7 +143,8 @@ namespace helix::shadercompiler
 
     // Reads every shader definition of the assembly. Fails with a message naming the shader and the member for
     // declarations that cannot work: a property type materials cannot hold, a keyword that is neither bool nor enum,
-    // a pass without a vertex or fragment shader, two passes or properties with one name.
+    // a pass without a vertex or fragment shader, two passes of one SubShader or two properties with one name, passes
+    // next to SubShader classes.
     bool ReadShaderDefinitions(const Assembly& assembly, Array<ShaderDescription>& out, String& error);
 
     // The definition of one class (a TypeDef row with the Shader attribute).
