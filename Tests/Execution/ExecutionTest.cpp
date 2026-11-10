@@ -348,6 +348,22 @@ void RunCases(Device& d, bool direct3d)
                 cl.SetVertexBuffer(0, vertices);
                 d.Submit(cl);
                 d.Submit(bind);
+                // Dynamic keywords: their values go into the keyword block the compiler added.
+                if (const ReflectedBlock* block = fragmentInfo.FindBlock(kKeywordBlockName))
+                {
+                    TransientAllocation values = d.AllocateTransient(block->size);
+                    std::memset(values.data, 0, block->size);
+                    for (const ReflectedMember& member : block->members)
+                        for (const KeywordValue& k : keywords)
+                            if (k.name == StringView(member.name))
+                            {
+                                u32 value = u32(k.value);
+                                std::memcpy(static_cast<u8*>(values.data) + member.offset, &value, 4);
+                            }
+                    CommandList keywordBind;
+                    keywordBind.SetUniformBuffer(block->slot, values);
+                    d.Submit(keywordBind);
+                }
                 CommandList draw;
                 if (frontFaces)
                 {

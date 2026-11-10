@@ -51,7 +51,8 @@ HX_TEST(Variants, ListsTheCombinationsAPassReads)
     const ShaderPass* depth = glass.FindPass("Depth");
     HX_REQUIRE(forward && depth);
 
-    // Fog is a plain keyword: both values. Detail is a shader feature nobody uses: only its first member.
+    // Fog is a plain keyword: both values. Detail is a shader feature nobody uses: only its first member. Flicker is
+    // dynamic: the code reads it, but it makes no variants.
     VariantSet set;
     bool ok = EnumerateVariants(a, glass, *forward, {}, set, error);
     if (!ok)

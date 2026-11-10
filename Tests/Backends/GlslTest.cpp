@@ -2,6 +2,7 @@
 
 #include <Helix/ShaderCompiler/Backends/Glsl.h>
 #include <Helix/ShaderCompiler/Frontend/Frontend.h>
+#include <Helix/ShaderCompiler/Reflection/Reflection.h>
 #include <Helix/Testing/Test.h>
 
 #include <cstdio>
@@ -211,6 +212,31 @@ HX_TEST(Glsl, EmitsComputeShadersWithStorageBuffers)
     HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(libraryMethods, "Fragment"), Stage::Fragment, module, error));
     std::printf("    %s\n", error.CStr());
     HX_CHECK(StringView(error).Contains("Translation") && StringView(error).Contains("TranslateOptions::references"));
+
+    // Dynamic keywords are members of the keyword block at the last uniform slot, in declaration order.
+    u32 dynamicKeywords = a.FindType("Helix.ShaderTests.Cases", "DynamicKeywords");
+    const KeywordValue tint[] = {{"Tint", 1}, {"Glow", 1}};
+    TranslateOptions tinted;
+    tinted.keywords = Span<const KeywordValue>(tint, 2);
+    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(dynamicKeywords, "Fragment"), Stage::Fragment, module, error, tinted) &&
+               EmitGlsl(module, GlslTarget::Essl300, mobile, error));
+    ShaderReflection keywordInfo;
+    HX_REQUIRE(Reflect(module, keywordInfo, error));
+    const ReflectedBlock* keywordBlock = keywordInfo.FindBlock(kKeywordBlockName);
+    HX_REQUIRE(keywordBlock != nullptr);
+    HX_CHECK(keywordBlock->slot == kKeywordBlockSlot && keywordBlock->members.Size() == 2u && keywordBlock->members[0].name == "Glow" &&
+             keywordBlock->members[1].name == "Level" && keywordBlock->members[1].offset == 4);
+    bool keywordBinding = false;
+    for (const GlslBinding& b : mobile.bindings)
+        keywordBinding = keywordBinding || (b.name == "hx_block_hx_keywords" && b.slot == kKeywordBlockSlot);
+    HX_CHECK(keywordBinding);
+    usize dynamicCount = 0;
+    for (const KeywordUse& use : module.keywords)
+        dynamicCount += use.dynamic ? 1 : 0;
+    HX_CHECK(module.keywords.Size() == 3u && dynamicCount == 2u);
+    HX_CHECK(TranslateEntryPoint(a, a.FindMethod(rejected, "KeywordSlotTaken"), Stage::Fragment, module, error) == false);
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("onKeywordSlot") && StringView(error).Contains("dynamic keywords"));
 
     // Resources declared by an included assembly are bound like the shader's own.
     Assembly includes;

@@ -45,6 +45,9 @@ namespace helix::shadercompiler
                 return false;
             for (const KeywordUse& use : module.keywords)
             {
+                // Dynamic keywords are uniforms and make no variants.
+                if (use.dynamic)
+                    continue;
                 bool known = false;
                 for (const KeywordUse& other : read)
                     known = known || other.name == use.name;

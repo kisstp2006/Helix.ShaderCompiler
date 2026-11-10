@@ -1029,3 +1029,27 @@ public static class Includes
         return new float4(c * 0.5f, r);
     }
 }
+
+/// <summary>Dynamic keywords are read from the keyword block at run time; the plain keyword still makes variants.</summary>
+public static class DynamicKeywords
+{
+    [Keyword(Dynamic = true)] public static bool Glow;
+    [Keyword(Dynamic = true)] public static Detail Level;
+    [Keyword] public static bool Tint;
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        float3 c = new float3(uv, 0.25f);
+        if (Glow)
+            c += 0.25f;
+        if (Level == Detail.High)
+            c.z = uv.x * uv.y;
+        else if (Level == Detail.Medium)
+            c.z = 0.5f;
+        if (Tint)
+            c.x *= 0.5f;
+        return new float4(Saturate(c), 1.0f);
+    }
+}

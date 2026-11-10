@@ -74,6 +74,8 @@ public sealed class Glass : ShaderDefinition
                 color *= 0.5f;
             if (Detail == GlassDetail.High)
                 color.z = 1.0f;
+            if (Flicker)
+                color.x = 1.0f - color.x;
             return new float4(color, 0.5f);
         }
     }

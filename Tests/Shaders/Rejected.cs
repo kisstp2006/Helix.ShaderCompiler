@@ -96,6 +96,14 @@ public static class Rejected
     [return: Target(0)]
     public static float4 StaticAutoProperty([Location(0)] float2 uv) => new float4(uv * Gain, 0.0f, 1.0f);
 
+    [Keyword(Dynamic = true)] public static readonly bool Sparkle;
+
+    [Uniform(11)] public static HalfBlock onKeywordSlot;
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 KeywordSlotTaken() => Sparkle ? new float4(1.0f) : (float4)onKeywordSlot.tint;
+
     [FragmentShader]
     [return: Target(0)]
     public static float4 PicksLambda([Location(0)] float2 uv)

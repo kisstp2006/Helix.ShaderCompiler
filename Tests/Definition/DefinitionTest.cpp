@@ -117,7 +117,9 @@ HX_TEST(Definition, ReadsPassesWithRenderState)
     if (!ok)
         std::printf("    %s\n", error.CStr());
     HX_REQUIRE(ok);
-    HX_CHECK(module.keywords.Size() == 2u && StringView(shader.source).Contains("* 0.5") && StringView(shader.source).Contains(".z = 1.0"));
+    // Fog and Detail are constants of the variant, Flicker is read from the keyword block.
+    HX_CHECK(module.keywords.Size() == 3u && module.keywords[2].dynamic && StringView(shader.source).Contains("* 0.5") &&
+             StringView(shader.source).Contains(".z = 1.0") && StringView(shader.source).Contains("hx_block_hx_keywords"));
 }
 
 HX_TEST(Definition, ReadsEveryShaderAndReportsBadOnes)

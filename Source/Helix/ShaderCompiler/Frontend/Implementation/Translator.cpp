@@ -152,6 +152,9 @@ namespace helix::shadercompiler
                 i32 global;
             };
             Array<FieldGlobal> fieldGlobals;
+            // The block of dynamic keywords (-1 until a shader reads one) and the classes whose keywords it holds.
+            i32 keywordGlobal = -1;
+            Array<u64> keywordClasses;
             struct Compiled
             {
                 String key;
@@ -917,6 +920,67 @@ namespace helix::shadercompiler
                 return true;
             }
 
+            bool IsDynamicKeyword(u32 fieldRow) const
+            {
+                Array<CustomAttribute> attributes;
+                a->Attributes(Token(Table::Field, fieldRow), attributes);
+                for (const CustomAttribute& c : attributes)
+                {
+                    Array<AttributeArgument> fixed, named;
+                    if (c.typeNamespace != kLibrary || c.typeName != "KeywordAttribute" || !DecodeAttribute(*a, c, fixed, named))
+                        continue;
+                    for (const AttributeArgument& n : named)
+                        if (n.name == "Dynamic")
+                            return n.integer != 0;
+                }
+                return false;
+            }
+
+            // The member of the keyword block for a dynamic keyword field. The block holds every dynamic keyword of the
+            // class that declares it, in declaration order, so its layout is the same for every pass and variant.
+            i32 KeywordMember(Method& mt, u32 fieldRow)
+            {
+                if (keywordGlobal < 0)
+                {
+                    StructType s;
+                    s.name = kKeywordBlockName;
+                    m.structs.Push(Move(s));
+                    // structRows runs parallel to the structs; this one stands for no C# type.
+                    structRows.Push(~u64(0));
+                    Global g;
+                    g.name = kKeywordBlockName;
+                    g.kind = GlobalKind::Uniform;
+                    g.slot = kKeywordBlockSlot;
+                    g.type = Type::Struct(u32(m.structs.Size() - 1));
+                    m.globals.Push(Move(g));
+                    keywordGlobal = i32(m.globals.Size() - 1);
+                }
+                StructType& block = m.structs[m.globals[usize(keywordGlobal)].type.structIndex];
+                u32 typeRow = a->DeclaringTypeOfField(fieldRow);
+                if (!keywordClasses.Find(Key(typeRow)))
+                {
+                    keywordClasses.Push(Key(typeRow));
+                    TypeDefInfo t = a->TypeDef(typeRow);
+                    for (u32 f = t.fieldBegin; f < t.fieldEnd; f++)
+                    {
+                        if (!Has(Token(Table::Field, f), "KeywordAttribute") || !IsDynamicKeyword(f))
+                            continue;
+                        StringView name = a->Field(f).name;
+                        for (const StructField& existing : block.fields)
+                            if (StringView(existing.name) == name)
+                                return Fail(mt.name, Format("two dynamic keywords are named {}", name)), -1;
+                        StructField& member = block.fields.Emplace();
+                        member.name = name;
+                        member.type = kUInt;
+                    }
+                }
+                StringView name = a->Field(fieldRow).name;
+                for (usize i = 0; i < block.fields.Size(); i++)
+                    if (StringView(block.fields[i].name) == name)
+                        return i32(i);
+                return Fail(mt.name, Format("dynamic keyword {} is missing from the keyword block", name)), -1;
+            }
+
             // Static fields are resources (uniform block, texture, sampler) or keywords.
             bool StaticField(Method& mt, Token token, Item& out)
             {
@@ -938,11 +1002,38 @@ namespace helix::shadercompiler
                 FieldInfo field = a->Field(row);
                 if (Has(parent, "KeywordAttribute"))
                 {
-                    // Keywords are constants of the variant.
                     TypeSig sig;
                     bool isBool = ParseFieldSignature(field.signature, sig) && sig.kind == ElementType::Boolean;
                     if (!isBool && !(sig.kind == ElementType::ValueType && sig.token.Is(Table::TypeDef) && IsEnum(sig.token.Row())))
                         return Fail(mt.name, Format("keyword {} must be a bool or an enum declared in the shader assembly", field.name));
+                    if (IsDynamicKeyword(row))
+                    {
+                        // Read at run time from the keyword block.
+                        i32 member = KeywordMember(mt, row);
+                        if (member < 0)
+                            return false;
+                        bool known = false;
+                        for (const KeywordUse& use : m.keywords)
+                            known = known || use.name == field.name;
+                        if (!known)
+                        {
+                            KeywordUse use;
+                            use.name = field.name;
+                            use.isEnum = !isBool;
+                            use.dynamic = true;
+                            m.keywords.Push(Move(use));
+                        }
+                        const Global& block = m.globals[usize(keywordGlobal)];
+                        Expr e;
+                        e.kind = ExprKind::Field;
+                        e.a = Leaf(mt, ExprKind::Global, u32(keywordGlobal), block.type);
+                        e.index = u32(member);
+                        e.type = kUInt;
+                        ExprId value = AddExpr(mt.fn, Move(e));
+                        out = {isBool ? MakeBinary(mt.fn, Op::Ne, value, ConstInt(mt, 0, kUInt), kBool) : Cast(mt, value, kInt), false};
+                        return true;
+                    }
+                    // Other keywords are constants of the variant.
                     i64 value = 0;
                     for (const KeywordValue& k : options.keywords)
                         if (k.name == field.name)
@@ -2471,6 +2562,16 @@ namespace helix::shadercompiler
                 return false;
             }
         }
+        // The keyword block takes its slot from user uniforms.
+        bool keywordBlock = false;
+        for (const Global& g : out.globals)
+            keywordBlock = keywordBlock || g.name == StringView(kKeywordBlockName);
+        for (const Global& g : out.globals)
+            if (keywordBlock && g.kind == GlobalKind::Uniform && g.slot == kKeywordBlockSlot && g.name != StringView(kKeywordBlockName))
+            {
+                error = Format("{}{}: uniform {} is on slot {}, which holds the dynamic keywords", t.At(0, method, 0), info.name, g.name, kKeywordBlockSlot);
+                return false;
+            }
         Simplify(out);
         return true;
     }

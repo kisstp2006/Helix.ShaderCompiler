@@ -313,7 +313,10 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
 
 Not available, each reported with the file and line (when debug information is given), the method name and the
 reason: classes and anything allocated, recursion, exceptions, `goto`, 64 bit integers, calls into the .NET libraries.
-Dynamic keywords (decided at run time) are not available yet.
+Keywords with `Dynamic = true` make no variants: the code reads them from the uniform block `hx_keywords` at slot 11 (the
+last uniform slot of Helix.RHI), one `uint` per dynamic keyword of the declaring class in declaration order (a bool is
+on when not zero, an enum holds the member value). Reflection lists the block; a user uniform on slot 11 is an error
+when a shader reads a dynamic keyword.
 
 ## Conventions of the generated GLSL
 
@@ -361,6 +364,8 @@ cannot be indexed.
   targets are unchanged; half in a uniform block and in a vertex input is rejected.
 - Local functions: a static one, ones that capture a parameter and locals (changed after the capture), one that
   counts its calls in a captured local, and a nested one with a ref parameter.
+- Dynamic keywords: a bool and an enum read from the keyword block next to a plain keyword, every combination; the
+  block layout in reflection and GLSL; a user uniform on the keyword slot is rejected.
 - Debug information: lines from the PDB next to the test shaders and from the one embedded in Tests/Includes, damaged
   PDBs, and errors that name the line of the C# source, also inside a called method.
 - Includes: structs, an enum, a readonly property and functions of Tests/Includes, a uniform struct of it, and a

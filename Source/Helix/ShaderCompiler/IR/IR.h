@@ -294,8 +294,15 @@ namespace helix::shadercompiler
     {
         String name;
         bool isEnum = false;
+        // A dynamic keyword is read from the keyword block at run time; value is then 0.
+        bool dynamic = false;
         i64 value = 0;
     };
+
+    // Dynamic keywords live in a uniform block the compiler adds: one uint per keyword, at the last uniform slot of the
+    // RHI (kMaxUniformSlots = 12).
+    inline constexpr u32 kKeywordBlockSlot = 11;
+    inline constexpr const char* kKeywordBlockName = "hx_keywords";
 
     struct Module
     {
