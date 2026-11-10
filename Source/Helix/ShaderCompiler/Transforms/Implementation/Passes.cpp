@@ -353,6 +353,7 @@ namespace helix::shadercompiler
 
         constexpr Pass kPasses[] = {
             {"simplify", SimplifyPass},
+            {"struct locals", passes::ReplaceStructLocals},
             {"copies", passes::PropagateCopies},
             {"common subexpressions", passes::EliminateCommonSubexpressions},
             {"dead code", passes::RemoveDeadCode},

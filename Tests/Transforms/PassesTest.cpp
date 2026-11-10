@@ -186,3 +186,16 @@ HX_TEST(Passes, ComputeRepeatedOperationsOnce)
     // One for the first two statements, one in the branch, one after uv.x changed.
     HX_CHECK(seen.before == 4 && seen.after == 3);
 }
+
+HX_TEST(Passes, SplitStructLocalsUsedByTheirFields)
+{
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    Module module;
+    HX_REQUIRE(Translate(a, "SplitLocals", module));
+    // p came apart into floats and a float2; q, which a call assigns as a whole, is still a struct.
+    usize structs = 0;
+    for (const Variable& v : module.functions[module.entry].locals)
+        structs += v.type.base == BaseType::Struct ? 1 : 0;
+    HX_CHECK(structs == 1);
+}

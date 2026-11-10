@@ -9,6 +9,10 @@ namespace helix::shadercompiler::passes
     // that value wherever it is read; its assignment goes away.
     bool PropagateCopies(Module& module, String& error);
 
+    // A struct local that is never used as a whole (only its fields, and the zero value assigned) becomes one local per
+    // field; nested structs come apart one level after the other.
+    bool ReplaceStructLocals(Module& module, String& error);
+
     // An operation computed again in a straight run of statements, with the variables it reads unchanged, reads the
     // local the first statement now computes it into.
     bool EliminateCommonSubexpressions(Module& module, String& error);

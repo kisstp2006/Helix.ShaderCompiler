@@ -1087,3 +1087,40 @@ public static class Repeated
         return new float4(a, b, Saturate(c * 0.5f), d);
     }
 }
+
+/// <summary>Struct locals: one used only by its fields (also nested) comes apart, one assigned as a whole stays.</summary>
+public static class SplitLocals
+{
+    public struct Inner
+    {
+        public float x;
+        public float y;
+    }
+
+    public struct Pair
+    {
+        public float2 a;
+        public Inner inner;
+    }
+
+    private static Pair Make(float2 uv)
+    {
+        Pair p = default;
+        p.a = uv.yx;
+        p.inner.x = 0.5f;
+        return p;
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        Pair p = default;
+        p.a = uv * 0.5f;
+        p.inner.x = uv.x + 0.25f;
+        p.inner.y = p.a.y * 2.0f;
+        Pair q = Make(uv);
+        q.a.x += 0.125f;
+        return new float4(p.a.x, p.inner.y, q.a.x, p.inner.x * q.inner.x);
+    }
+}
