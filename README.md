@@ -18,7 +18,7 @@ Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50, GLSL
 | `Source/Helix/ShaderCompiler/Cache/` | `CompileModule` and `ShaderCache`: one entry point for all targets, results kept by content in memory and on disk |
 | `Source/Helix/ShaderCompiler/Material/` | `BindProperties`: where each material property of a shader goes in one compiled pass, and the default block data |
 | `Source/Helix/ShaderCompiler/Reflection/` | `Reflect` and `LinkReflection`: uniform block layouts, resource slots, stage inputs and outputs of a compiled variant, and whether two stages fit |
-| `Source/Helix/ShaderCompiler/Transforms/` | The passes on a translated module (`ShaderPasses`, one table), `RunPasses`, `VerifyModule` and `PrintModule`; `Simplify`: constant folding, constant locals, removal of code, functions and resources that cannot be reached; counted loops unrolled (`[Unroll]` and `[Loop]` on a method, else short and small loops); struct locals split into one local per field; copy propagation; common subexpressions in straight runs of statements; dead stores, locals and helper parameters |
+| `Source/Helix/ShaderCompiler/Transforms/` | The passes on a translated module (`ShaderPasses`, one table), `RunPasses`, `LinkStages` (vertex outputs the fragment stage of the variant does not read are not written), `VerifyModule` and `PrintModule`; `Simplify`: constant folding, constant locals, removal of code, functions and resources that cannot be reached; counted loops unrolled (`[Unroll]` and `[Loop]` on a method, else short and small loops); struct locals split into one local per field; copy propagation; common subexpressions in straight runs of statements; dead stores, locals and helper parameters |
 | `Source/Helix/ShaderCompiler/Backends/` | `EmitGlsl`: a module to GLSL source with its binding table; `EmitDxbc`: a module to a Direct3D bytecode container |
 | `Tests/Shaders/` | C# test shaders, built with the .NET SDK during the CMake build and embedded into the test program |
 | `Tests/Includes/` | C# assembly the test shaders call into, the way shaders use include files |
@@ -385,7 +385,9 @@ cannot be indexed.
   reads, and still matches the CPU; case Repeated computes a sine shared by two statements once, but not across a
   branch or after the variable it reads changed; case SplitLocals splits a struct local (with a nested struct) used
   only by its fields and keeps one a call assigns as a whole; case Unrolled unrolls 20 trips in an [Unroll] method and
-  a short loop on its own, and keeps the loop of a [Loop] method.
+  a short loop on its own, and keeps the loop of a [Loop] method; LinkStages drops the uv a depth pass never reads and
+  refuses a fragment stage that reads a location the vertex stage does not write; every execution case draws with a
+  vertex stage linked to it.
 - Kernel variants: a kernel with a bool and an enum keyword runs once per combination, compiled through the cache; the
   variants of the kernels of a compute definition for the three compute targets.
 - Dynamic keywords: a bool and an enum read from the keyword block next to a plain keyword, every combination; the

@@ -180,7 +180,8 @@ namespace helix::shadercompiler
         if (r.base == BaseType::Struct)
         {
             for (const StructField& f : m.structs[r.structIndex].fields)
-                if (!Value(f.semantic, f.semanticIndex, f.type, f.flat, f.name, Format("field {} of the return value", f.name), out.outputs, error))
+                if (!f.unread &&
+                    !Value(f.semantic, f.semanticIndex, f.type, f.flat, f.name, Format("field {} of the return value", f.name), out.outputs, error))
                     return false;
         }
         else if (!r.IsVoid() && !Value(m.returnSemantic, m.returnSemanticIndex, r, false, "result", "the return value", out.outputs, error))

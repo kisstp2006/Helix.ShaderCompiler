@@ -62,6 +62,8 @@ namespace helix::shadercompiler
         // Where a store goes: components of a temp or output register.
         struct Dst
         {
+            // A part of a value that goes nowhere (an output the next stage does not read).
+            bool none = false;
             u32 reg = 0;
             u8 comps[4] = {0, 1, 2, 3};
             u8 count = 1;
@@ -281,6 +283,8 @@ namespace helix::shadercompiler
             // mov with the source components lined up with the destination components.
             void Store(const Dst& d, const Src& s)
             {
+                if (d.none)
+                    return;
                 if (d.depth)
                 {
                     Instruction in(kMov);
@@ -2030,6 +2034,13 @@ namespace helix::shadercompiler
                     {
                         if (RegisterCount(f.type) != 1)
                             return Fail(Format("field {} of the return value must be a scalar or vector", f.name));
+                        if (f.unread)
+                        {
+                            Dst none;
+                            none.none = true;
+                            entryOutputs.Push(none);
+                            continue;
+                        }
                         if (!Output(f.semantic, f.semanticIndex, f.type, Format("field {} of the return value", f.name)))
                             return false;
                     }

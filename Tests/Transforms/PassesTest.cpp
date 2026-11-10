@@ -1,6 +1,9 @@
 #include <Support/TestAssemblies.h>
 
 #include <Helix/ShaderCompiler/Frontend/Frontend.h>
+#include <Helix/ShaderCompiler/Backends/Dxbc.h>
+#include <Helix/ShaderCompiler/Backends/Glsl.h>
+#include <Helix/ShaderCompiler/Transforms/Link.h>
 #include <Helix/ShaderCompiler/Transforms/Passes.h>
 #include <Helix/Testing/Test.h>
 
@@ -245,4 +248,45 @@ HX_TEST(Passes, UnrollCountedLoops)
     }
     // 20 trips are unrolled only because of [Unroll]; 4 trips are unrolled anyway, but not in a [Loop] method.
     HX_CHECK(sum == 0 && kept == 1 && loops(module.functions[module.entry]) == 0);
+}
+
+HX_TEST(Passes, LinkDropsOutputsTheFragmentStageDoesNotRead)
+{
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    u32 glass = a.FindType("Helix.ShaderTests", "Glass");
+    u32 depth = 0;
+    for (u32 row = 1; row <= a.RowCount(Table::TypeDef) && !depth; row++)
+        if (a.TypeDef(row).enclosingType == glass && a.TypeDef(row).name == "Depth")
+            depth = row;
+    HX_REQUIRE(depth != 0);
+    Module vertex, fragment;
+    String error;
+    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(depth, "Vertex"), Stage::Vertex, vertex, error) &&
+               TranslateEntryPoint(a, a.FindMethod(depth, "Fragment"), Stage::Fragment, fragment, error));
+    GlslShader before, after;
+    HX_REQUIRE(EmitGlsl(vertex, GlslTarget::Glsl330, before, error));
+    // The depth pass writes no color, so the uv the vertex stage computes goes nowhere.
+    HX_REQUIRE(LinkStages(vertex, fragment, error));
+    DxbcShader code;
+    HX_REQUIRE(EmitGlsl(vertex, GlslTarget::Glsl330, after, error) && EmitDxbc(vertex, code, error));
+    HX_CHECK(StringView(before.source).Contains("out vec2 hx_v0") && !StringView(after.source).Contains("hx_v0") &&
+             StringView(after.source).Contains("gl_Position"));
+
+    // A fragment stage that reads a location the vertex stage does not write cannot be linked.
+    Module gradient, positionOnly;
+    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(a.FindType("Helix.ShaderTests.Cases", "Gradient"), "Fragment"), Stage::Fragment, gradient, error));
+    u32 layered = a.FindType("Helix.ShaderTests", "Layered");
+    u32 detailed = 0, forward = 0;
+    for (u32 row = 1; row <= a.RowCount(Table::TypeDef); row++)
+        if (a.TypeDef(row).enclosingType == layered && a.TypeDef(row).name == "Detailed")
+            detailed = row;
+    for (u32 row = 1; row <= a.RowCount(Table::TypeDef); row++)
+        if (detailed && a.TypeDef(row).enclosingType == detailed && a.TypeDef(row).name == "Forward")
+            forward = row;
+    HX_REQUIRE(forward != 0);
+    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(forward, "Vertex"), Stage::Vertex, positionOnly, error));
+    HX_CHECK(!LinkStages(positionOnly, gradient, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("location 0"));
 }

@@ -690,6 +690,8 @@ namespace helix::shadercompiler
                     FormatAppend(body, "    {} r = {};\n", Decl(r), call);
                     for (const StructField& f : m.structs[r.structIndex].fields)
                     {
+                        if (f.unread)
+                            continue;
                         if (!Interface(f.semantic, f.semanticIndex, f.type, f.flat, false, expression, Format("field {} of the return value", f.name)))
                             return false;
                         FormatAppend(body, "    {} = r.m_{};\n", expression, Ident(f.name));

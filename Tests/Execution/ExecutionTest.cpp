@@ -5,6 +5,7 @@
 #include <Helix/ShaderCompiler/Backends/Dxbc.h>
 #include <Helix/ShaderCompiler/Backends/Glsl.h>
 #include <Helix/ShaderCompiler/Frontend/Frontend.h>
+#include <Helix/ShaderCompiler/Transforms/Link.h>
 #include <Helix/ShaderCompiler/Reflection/Reflection.h>
 #include <Helix/Testing/Test.h>
 
@@ -257,8 +258,8 @@ void RunCases(Device& d, bool direct3d)
         for (u32 version = 0; version < targetCount && caseOk; version++)
         {
             Module vertexModule, fragmentModule, probeModule;
-            GlslShader vertexShader, fragmentShader, probeShader;
-            DxbcShader vertexCode, fragmentCode, probeCode;
+            GlslShader vertexShader, fragmentShader, probeShader, probeVertexShader;
+            DxbcShader vertexCode, fragmentCode, probeCode, probeVertexCode;
             String error;
             bool compiled = TranslateEntryPoint(a, a.FindMethod(fullscreen, "Vertex"), Stage::Vertex, vertexModule, error) &&
                             TranslateEntryPoint(a, a.FindMethod(type, "Fragment"), Stage::Fragment, fragmentModule, error, options) &&
@@ -271,14 +272,18 @@ void RunCases(Device& d, bool direct3d)
                 frontFaces = frontFaces || v.semantic == Semantic::FrontFacing;
             for (const ReflectedValue& v : fragmentInfo.outputs)
                 writesDepth = writesDepth || v.semantic == Semantic::Depth;
+            // The case draws with a vertex stage fitted to it; the probe keeps the full one.
+            Module probeVertex = vertexModule;
+            compiled = compiled && LinkStages(vertexModule, fragmentModule, error);
             // Bindless textures exist from GLSL 4.50 on, with the extension.
             if (compiled && !direct3d && targets[version] == GlslTarget::Glsl330 && FindBindless(fragmentModule).textures)
                 continue;
             if (compiled && direct3d)
-                compiled = EmitDxbc(vertexModule, vertexCode, error) && EmitDxbc(fragmentModule, fragmentCode, error) && EmitDxbc(probeModule, probeCode, error);
+                compiled = EmitDxbc(vertexModule, vertexCode, error) && EmitDxbc(fragmentModule, fragmentCode, error) && EmitDxbc(probeModule, probeCode, error) &&
+                           EmitDxbc(probeVertex, probeVertexCode, error);
             else if (compiled)
                 compiled = EmitGlsl(vertexModule, targets[version], vertexShader, error) && EmitGlsl(fragmentModule, targets[version], fragmentShader, error) &&
-                           EmitGlsl(probeModule, targets[version], probeShader, error);
+                           EmitGlsl(probeModule, targets[version], probeShader, error) && EmitGlsl(probeVertex, targets[version], probeVertexShader, error);
             if (!compiled)
             {
                 std::printf("    %s: %s\n", label.CStr(), error.CStr());
@@ -327,6 +332,10 @@ void RunCases(Device& d, bool direct3d)
             PipelineHandle frontPipeline = frontFaces ? d.CreatePipeline(flipped) : PipelineHandle{};
             ShaderHandle probe = !writesDepth ? ShaderHandle{} : direct3d ? MakeShader(d, probeCode, ShaderStage::Fragment) : MakeShader(d, probeShader, ShaderStage::Fragment);
             PipelineDesc probeDesc = pd;
+            ShaderHandle probeVs = !writesDepth ? ShaderHandle{}
+                                   : direct3d   ? MakeShader(d, probeVertexCode, ShaderStage::Vertex)
+                                                : MakeShader(d, probeVertexShader, ShaderStage::Vertex);
+            probeDesc.vertexShader = probeVs;
             probeDesc.fragmentShader = probe;
             probeDesc.depthWrite = false;
             PipelineHandle probePipeline = writesDepth ? d.CreatePipeline(probeDesc) : PipelineHandle{};
@@ -411,6 +420,7 @@ void RunCases(Device& d, bool direct3d)
             d.Destroy(frontPipeline);
             d.Destroy(probePipeline);
             d.Destroy(probe);
+            d.Destroy(probeVs);
             d.Destroy(vs);
             d.Destroy(fs);
         }

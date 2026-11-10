@@ -84,6 +84,8 @@ namespace helix::shadercompiler
         Semantic semantic = Semantic::None;
         u32 semanticIndex = 0;
         bool flat = false;
+        // Set by LinkStages on a vertex output the fragment stage does not read: the backends do not write it.
+        bool unread = false;
     };
 
     struct ArrayType
