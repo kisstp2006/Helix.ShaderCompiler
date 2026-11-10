@@ -227,8 +227,15 @@ namespace helix::shadercompiler::frontend
         }
         if (typeName == "BindlessTexture" || typeName == "BindlessBuffer")
         {
+            // The handle comes first unless a new one is made; damaged IL can call any member either way.
+            auto takes = [&](usize count, bool constructs) {
+                return isNew == constructs && args.Size() == count ||
+                       Fail(mt.name, Format("{}.{} takes {} arguments, the call has {}", typeName, member, count, args.Size()));
+            };
             if (member == ".ctor")
             {
+                if (!takes(isNew ? 1 : 2, isNew))
+                    return false;
                 if (isNew)
                     Push(mt, Coerce(mt, args[0].e, kUInt));
                 else
@@ -237,6 +244,8 @@ namespace helix::shadercompiler::frontend
             }
             if (member == "get_Index")
             {
+                if (!takes(1, false))
+                    return false;
                 Push(mt, args[0].e);
                 return true;
             }
@@ -254,6 +263,8 @@ namespace helix::shadercompiler::frontend
             {
                 if (member != k.member)
                     continue;
+                if (!takes(IntrinsicArity(k.intrinsic), false))
+                    return false;
                 Array<ExprId> operands;
                 for (const Item& arg : args)
                     operands.Push(arg.e);
