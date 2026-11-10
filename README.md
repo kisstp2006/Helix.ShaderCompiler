@@ -22,6 +22,7 @@ model 5.0 bytecode.
 | `Source/Helix/ShaderCompiler/Transforms/` | The passes on a translated module (`ShaderPasses`, one table), `RunPasses`, `LinkStages` (vertex outputs the fragment stage of the variant does not read are not written), `VerifyModule` and `PrintModule`; `Simplify`: constant folding, constant locals, removal of code, functions and resources that cannot be reached; counted loops unrolled (`[Unroll]` and `[Loop]` on a method, else short and small loops); struct locals split into one local per field; copy propagation; common subexpressions in straight runs of statements; dead stores, locals and helper parameters |
 | `Source/Helix/ShaderCompiler/Backends/` | `EmitGlsl`: a module to GLSL source with its binding table; `EmitDxbc`: a module to a Direct3D bytecode container; `EmitHlsl`: shader model 5 HLSL text of a module, for reading only (error reports and dumps next to the bytecode) |
 | `Tests/Shaders/` | C# test shaders, built with the .NET SDK during the CMake build and embedded into the test program |
+| `Tests/Golden/` | The image of every execution case as PNG; every backend and GPU must draw it within 2/255 (`HELIX_UPDATE_GOLDEN=1` writes them) |
 | `Tests/Includes/` | C# assembly the test shaders call into, the way shaders use include files |
 | `Tests/Oracle/` | C# program that runs the test shaders on the CPU and writes the images the GPU must reproduce |
 | `Tests/Execution/` | Compiles every case, draws it through Helix.RHI and compares it with the CPU image |

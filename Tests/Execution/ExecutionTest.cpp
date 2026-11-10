@@ -1,3 +1,4 @@
+#include <Support/Golden.h>
 #include <Support/TestAssemblies.h>
 
 #include <Helix/Core/Strings/Format.h>
@@ -445,6 +446,9 @@ void RunCases(Device& d, bool direct3d)
                 }
                 else
                     wrong = 1;
+                // The image is also kept in the repository, so a change of the oracle or the library shows up too.
+                if (!wrong && !MatchGolden(label, pixels.Data(), size, size))
+                    caseOk = false;
                 if (wrong)
                 {
                     u32 p = firstWrong / 4;

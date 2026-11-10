@@ -28,3 +28,6 @@
 [submodule "External/Helix.Jobs"]
 	path = External/Helix.Jobs
 	url = https://github.com/kisstp2006/Helix.Jobs
+[submodule "External/Helix.Image"]
+	path = External/Helix.Image
+	url = https://github.com/kisstp2006/Helix.Image
