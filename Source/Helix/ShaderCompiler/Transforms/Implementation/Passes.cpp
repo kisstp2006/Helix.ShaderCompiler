@@ -353,6 +353,9 @@ namespace helix::shadercompiler
 
         constexpr Pass kPasses[] = {
             {"simplify", SimplifyPass},
+            {"unroll", passes::UnrollLoops},
+            // Unrolled bodies have constant counters to fold.
+            {"simplify again", SimplifyPass},
             {"struct locals", passes::ReplaceStructLocals},
             {"copies", passes::PropagateCopies},
             {"common subexpressions", passes::EliminateCommonSubexpressions},

@@ -174,8 +174,6 @@ HX_TEST(Passes, ComputeRepeatedOperationsOnce)
         if (pass == "copies")
         {
             s.before = count;
-            if (std::getenv("HELIX_PRINT_PASSES"))
-                std::printf("%s\n", text.CStr());
         }
         if (pass == "common subexpressions")
             s.after = count;
@@ -198,4 +196,53 @@ HX_TEST(Passes, SplitStructLocalsUsedByTheirFields)
     for (const Variable& v : module.functions[module.entry].locals)
         structs += v.type.base == BaseType::Struct ? 1 : 0;
     HX_CHECK(structs == 1);
+}
+
+// HELIX_PRINT_PASSES=<case> prints the module of that case after every pass.
+HX_TEST(Passes, PrintsACaseOnRequest)
+{
+    const char* name = std::getenv("HELIX_PRINT_PASSES");
+    if (!name)
+        return;
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    TranslateOptions options;
+    options.passes.dump = [](StringView pass, const Module& module, void*) {
+        String text;
+        PrintModule(module, text);
+        std::printf("---- after %s\n%s", String(pass).CStr(), text.CStr());
+    };
+    Module module;
+    HX_CHECK(Translate(a, name, module, options));
+}
+
+HX_TEST(Passes, UnrollCountedLoops)
+{
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    Module module;
+    HX_REQUIRE(Translate(a, "Unrolled", module));
+    auto loops = [](const Function& f) {
+        usize n = 0;
+        auto count = [&](auto&& self, const Array<Stmt>& stmts) -> void {
+            for (const Stmt& s : stmts)
+            {
+                n += s.kind == StmtKind::Loop ? 1 : 0;
+                self(self, s.body);
+                self(self, s.elseBody);
+            }
+        };
+        count(count, f.body);
+        return n;
+    };
+    usize sum = 99, kept = 99;
+    for (const Function& f : module.functions)
+    {
+        if (StringView(f.name).Contains("Sum"))
+            sum = loops(f);
+        if (StringView(f.name).Contains("Kept"))
+            kept = loops(f);
+    }
+    // 20 trips are unrolled only because of [Unroll]; 4 trips are unrolled anyway, but not in a [Loop] method.
+    HX_CHECK(sum == 0 && kept == 1 && loops(module.functions[module.entry]) == 0);
 }

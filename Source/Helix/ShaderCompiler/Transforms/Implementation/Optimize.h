@@ -9,6 +9,10 @@ namespace helix::shadercompiler::passes
     // that value wherever it is read; its assignment goes away.
     bool PropagateCopies(Module& module, String& error);
 
+    // Counted loops whose trip count is known become one copy of the body per trip: always with [Unroll] (up to 256
+    // trips), never with [Loop], else when short (8 trips) and small (64 statements in all).
+    bool UnrollLoops(Module& module, String& error);
+
     // A struct local that is never used as a whole (only its fields, and the zero value assigned) becomes one local per
     // field; nested structs come apart one level after the other.
     bool ReplaceStructLocals(Module& module, String& error);

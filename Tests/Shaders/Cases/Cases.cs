@@ -1124,3 +1124,36 @@ public static class SplitLocals
         return new float4(p.a.x, p.inner.y, q.a.x, p.inner.x * q.inner.x);
     }
 }
+
+/// <summary>Loops the compiler unrolls: a short one on its own, a long one in an [Unroll] method, and none in a [Loop]
+/// method.</summary>
+public static class Unrolled
+{
+    [Unroll]
+    private static float Sum(float x)
+    {
+        float s = 0.0f;
+        for (int i = 0; i < 20; i++)
+            s += x * i;
+        return s * 0.005f;
+    }
+
+    [Loop]
+    private static float Kept(float x)
+    {
+        float s = 0.0f;
+        for (int i = 0; i < 4; i++)
+            s += x;
+        return s * 0.25f;
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        float s = 0.0f;
+        for (int i = 0; i < 4; i++)
+            s += uv.y * 0.25f;
+        return new float4(Sum(uv.x), Kept(uv.y), s, 1.0f);
+    }
+}

@@ -233,10 +233,19 @@ namespace helix::shadercompiler
         bool flat = false;
     };
 
+    // [Unroll] and [Loop] on the C# method: what happens to its loops.
+    enum class LoopHint : u8
+    {
+        Auto,
+        Unroll,
+        Keep,
+    };
+
     struct Function
     {
         String name;
         Type returnType;
+        LoopHint loops = LoopHint::Auto;
         Array<Variable> params;
         Array<Variable> locals;
         // Expression arena; id 0 is the null expression.

@@ -460,6 +460,9 @@ namespace helix::shadercompiler::frontend
         if (body.hasExceptionRegions)
             return Fail(mt.name, "try, catch and finally are not available in shaders");
         bool byRef = false;
+        mt.fn.loops = Has(Token(Table::MethodDef, row), "UnrollAttribute") ? LoopHint::Unroll
+                      : Has(Token(Table::MethodDef, row), "LoopAttribute")  ? LoopHint::Keep
+                                                                           : LoopHint::Auto;
         if (!MapType(mt.sig.returnType, &mt, mt.fn.returnType, byRef, mt.name) || byRef)
             return Fail(mt.name, "the return type cannot be used in shaders");
 
