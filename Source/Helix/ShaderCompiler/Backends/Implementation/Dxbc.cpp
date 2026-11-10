@@ -20,7 +20,7 @@ namespace helix::shadercompiler
             kRoundNe = 64, kRoundNi = 65, kRoundPi = 66, kRoundZ = 67, kRsq = 68, kSample = 69, kSampleL = 72, kSqrt = 75,
             kSincos = 77, kUdiv = 78, kUlt = 79, kUge = 80, kUmax = 83, kUmin = 84, kUshr = 85, kUtof = 86, kXor = 87,
             kDclResource = 88, kDclConstantBuffer = 89, kDclSampler = 90, kDclInput = 95, kDclInputSgv = 96, kDclInputPs = 98,
-            kDclInputPsSiv = 100, kDclOutput = 101, kDclOutputSiv = 103, kDclTemps = 104,
+            kDclInputPsSgv = 99, kDclInputPsSiv = 100, kDclOutput = 101, kDclOutputSiv = 103, kDclTemps = 104,
             kImad = 35, kBufinfo = 121, kDclThreadGroup = 155, kDclUavTyped = 156, kDclUavRaw = 157, kDclResourceRaw = 161, kStoreUavTyped = 164, kLdRaw = 165,
             kStoreRaw = 166, kImmAtomicIadd = 180, kSampleD = 73,
         };
@@ -66,6 +66,8 @@ namespace helix::shadercompiler
             u8 comps[4] = {0, 1, 2, 3};
             u8 count = 1;
             bool output = false;
+            // The depth output of a fragment shader, one component without a register number.
+            bool depth = false;
         };
 
         struct Value
@@ -275,6 +277,14 @@ namespace helix::shadercompiler
             // mov with the source components lined up with the destination components.
             void Store(const Dst& d, const Src& s)
             {
+                if (d.depth)
+                {
+                    Instruction in(kMov);
+                    in.words.Push(0x0000C001u);
+                    PutSrc(in, s, 0);
+                    Finish(in);
+                    return;
+                }
                 Src arranged = s;
                 arranged.count = 4;
                 for (u32 i = 0; i < 4; i++)
@@ -1653,6 +1663,14 @@ namespace helix::shadercompiler
                     inputs.Push({"SV_Position", 0, 1, 3, 0, 0xF});
                     Declare({kDclInputPsSiv | (4u << 11), 0x001010F2u, 0, 1});
                 }
+                else if (semantic == Semantic::FrontFacing && !vertex)
+                {
+                    // All bits set on the front face, as the IR keeps bools; never interpolated.
+                    s.reg = nextSystemRegister++;
+                    s.isFloat = false;
+                    inputs.Push({"SV_IsFrontFace", 0, 9, 1, s.reg, 1});
+                    Declare({kDclInputPsSgv | (1u << 11), 0x00101012u, s.reg, 9});
+                }
                 else if ((semantic == Semantic::VertexId || semantic == Semantic::InstanceId) && vertex)
                 {
                     bool vertexId = semantic == Semantic::VertexId;
@@ -1690,6 +1708,12 @@ namespace helix::shadercompiler
                     d.reg = index;
                     outputs.Push({"SV_Target", index, 0, ComponentType(type), d.reg, mask});
                     Declare({kDclOutput, 0x00102002u | (mask << 4), d.reg});
+                }
+                else if (semantic == Semantic::Depth && !vertex && type == kFloat)
+                {
+                    d.depth = true;
+                    outputs.Push({"SV_Depth", 0, 0, 3, 0xFFFFFFFFu, 1});
+                    Declare({kDclOutput, 0x0000C001u});
                 }
                 else
                     return Fail(Format("{} has a stage attribute the Direct3D backend does not support here", what));
@@ -1789,6 +1813,9 @@ namespace helix::shadercompiler
                     else if (p.semantic == Semantic::Location)
                         systemRegister = Max(systemRegister, p.semanticIndex + 1);
                 }
+                // Fragment inputs at locations sit one register up, after the position.
+                if (m.stage == Stage::Fragment)
+                    systemRegister++;
                 for (usize i = 0; i < fn.params.Size(); i++)
                 {
                     const helix::shadercompiler::Variable& p = fn.params[i];

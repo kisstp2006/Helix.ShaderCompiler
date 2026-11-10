@@ -5,6 +5,7 @@
 #include <Helix/ShaderCompiler/Backends/Dxbc.h>
 #include <Helix/ShaderCompiler/Backends/Glsl.h>
 #include <Helix/ShaderCompiler/Frontend/Frontend.h>
+#include <Helix/ShaderCompiler/Reflection/Reflection.h>
 #include <Helix/Testing/Test.h>
 
 #include <cstdio>
@@ -123,6 +124,7 @@ void RunCases(Device& d, bool direct3d)
     const f32 triangle[] = {-1, -1, 3, -1, -1, 3};
     BufferHandle vertices = d.CreateBuffer({.size = sizeof(triangle), .usage = BufferVertex, .initialData = triangle});
     TextureHandle target = d.CreateTexture({.format = Format::RGBA8Unorm, .width = size, .height = size, .usage = TextureRenderTarget | TextureSampled});
+    TextureHandle depthTarget = d.CreateTexture({.format = Format::D32Float, .width = size, .height = size, .usage = TextureDepthStencil});
     u32 fullscreen = a.FindType("Helix.ShaderTests.Cases", "Fullscreen");
     HX_REQUIRE(fullscreen != 0);
 
@@ -234,19 +236,29 @@ void RunCases(Device& d, bool direct3d)
         }
         for (u32 version = 0; version < targetCount && caseOk; version++)
         {
-            Module vertexModule, fragmentModule;
-            GlslShader vertexShader, fragmentShader;
-            DxbcShader vertexCode, fragmentCode;
+            Module vertexModule, fragmentModule, probeModule;
+            GlslShader vertexShader, fragmentShader, probeShader;
+            DxbcShader vertexCode, fragmentCode, probeCode;
             String error;
             bool compiled = TranslateEntryPoint(a, a.FindMethod(fullscreen, "Vertex"), Stage::Vertex, vertexModule, error) &&
-                            TranslateEntryPoint(a, a.FindMethod(type, "Fragment"), Stage::Fragment, fragmentModule, error, options);
+                            TranslateEntryPoint(a, a.FindMethod(type, "Fragment"), Stage::Fragment, fragmentModule, error, options) &&
+                            TranslateEntryPoint(a, a.FindMethod(fullscreen, "Probe"), Stage::Fragment, probeModule, error);
+            // A front facing input is drawn twice, once per winding; a depth output gets a depth buffer and a probe.
+            ShaderReflection fragmentInfo;
+            bool frontFaces = false, writesDepth = false;
+            compiled = compiled && Reflect(fragmentModule, fragmentInfo, error);
+            for (const ReflectedValue& v : fragmentInfo.inputs)
+                frontFaces = frontFaces || v.semantic == Semantic::FrontFacing;
+            for (const ReflectedValue& v : fragmentInfo.outputs)
+                writesDepth = writesDepth || v.semantic == Semantic::Depth;
             // Bindless textures exist from GLSL 4.50 on, with the extension.
             if (compiled && !direct3d && targets[version] == GlslTarget::Glsl330 && FindBindless(fragmentModule).textures)
                 continue;
             if (compiled && direct3d)
-                compiled = EmitDxbc(vertexModule, vertexCode, error) && EmitDxbc(fragmentModule, fragmentCode, error);
+                compiled = EmitDxbc(vertexModule, vertexCode, error) && EmitDxbc(fragmentModule, fragmentCode, error) && EmitDxbc(probeModule, probeCode, error);
             else if (compiled)
-                compiled = EmitGlsl(vertexModule, targets[version], vertexShader, error) && EmitGlsl(fragmentModule, targets[version], fragmentShader, error);
+                compiled = EmitGlsl(vertexModule, targets[version], vertexShader, error) && EmitGlsl(fragmentModule, targets[version], fragmentShader, error) &&
+                           EmitGlsl(probeModule, targets[version], probeShader, error);
             if (!compiled)
             {
                 std::printf("    %s: %s\n", label.CStr(), error.CStr());
@@ -282,7 +294,24 @@ void RunCases(Device& d, bool direct3d)
             pd.vertexBufferCount = 1;
             pd.attributes[0] = {0, 0, VertexFormat::Float2, 0};
             pd.attributeCount = 1;
+            if (writesDepth)
+            {
+                pd.depthTest = true;
+                pd.depthWrite = true;
+                pd.depthCompare = CompareFunction::Less;
+                pd.depthFormat = Format::D32Float;
+            }
             PipelineHandle pipeline = vs.IsValid() && fs.IsValid() ? d.CreatePipeline(pd) : PipelineHandle{};
+            PipelineDesc flipped = pd;
+            flipped.frontCounterClockwise = true;
+            PipelineHandle frontPipeline = frontFaces ? d.CreatePipeline(flipped) : PipelineHandle{};
+            ShaderHandle probe = !writesDepth ? ShaderHandle{} : direct3d ? MakeShader(d, probeCode, ShaderStage::Fragment) : MakeShader(d, probeShader, ShaderStage::Fragment);
+            PipelineDesc probeDesc = pd;
+            probeDesc.fragmentShader = probe;
+            probeDesc.depthWrite = false;
+            PipelineHandle probePipeline = writesDepth ? d.CreatePipeline(probeDesc) : PipelineHandle{};
+            if ((frontFaces && !frontPipeline.IsValid()) || (writesDepth && !probePipeline.IsValid()))
+                pipeline = PipelineHandle{};
             if (!pipeline.IsValid())
             {
                 std::printf("    %s: the generated shader was rejected by the driver:\n%s\n", label.CStr(), fragmentShader.source.CStr());
@@ -294,13 +323,27 @@ void RunCases(Device& d, bool direct3d)
                 RenderPassDesc pass;
                 pass.colors[0].texture = target;
                 pass.colors[0].clearColor[3] = 0.0f;
+                if (writesDepth)
+                    pass.depth.texture = depthTarget;
                 cl.BeginRenderPass(pass);
                 cl.SetPipeline(pipeline);
                 cl.SetVertexBuffer(0, vertices);
                 d.Submit(cl);
                 d.Submit(bind);
                 CommandList draw;
+                if (frontFaces)
+                {
+                    draw.SetScissor({0, 0, size / 2, size});
+                    draw.Draw(3);
+                    draw.SetPipeline(frontPipeline);
+                    draw.SetScissor({i32(size / 2), 0, size / 2, size});
+                }
                 draw.Draw(3);
+                if (writesDepth)
+                {
+                    draw.SetPipeline(probePipeline);
+                    draw.Draw(3);
+                }
                 draw.EndRenderPass();
                 d.Submit(draw);
                 Array<u8> pixels;
@@ -329,6 +372,9 @@ void RunCases(Device& d, bool direct3d)
                 }
             }
             d.Destroy(pipeline);
+            d.Destroy(frontPipeline);
+            d.Destroy(probePipeline);
+            d.Destroy(probe);
             d.Destroy(vs);
             d.Destroy(fs);
         }
@@ -354,6 +400,7 @@ void RunCases(Device& d, bool direct3d)
     std::printf("    %u of %u shaders match the CPU on %s (%s)\n", passed, caseCount - skipped, d.Caps().renderer,
                 direct3d ? "Direct3D bytecode" : targetCount == 2 ? "GLSL 330 and 450" : "GLSL 330");
     d.Destroy(target);
+    d.Destroy(depthTarget);
     d.Destroy(vertices);
 }
 }

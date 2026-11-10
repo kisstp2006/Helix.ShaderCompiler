@@ -78,6 +78,20 @@ internal static class Program
         }
     }
 
+    // The color a fragment result leaves in the target. With a depth output the test draws a probe at depth 0.5 with the
+    // test Less after the case, so the probe color wins where the case wrote a greater depth.
+    private static float4 Color(object result)
+    {
+        if (result is float4 color)
+            return color;
+        FieldInfo[] fields = result.GetType().GetFields();
+        float4 target = (float4)fields.First(f => f.GetCustomAttribute<TargetAttribute>() != null).GetValue(result)!;
+        FieldInfo? depth = fields.FirstOrDefault(f => f.GetCustomAttribute<DepthAttribute>() != null);
+        if (depth == null)
+            return target;
+        return System.Math.Clamp((float)depth.GetValue(result)!, 0.0f, 1.0f) <= 0.5f ? target : new float4(1.0f, 0.0f, 1.0f, 1.0f);
+    }
+
     private static void WriteTexture(BinaryWriter w, Texture2D texture, SamplerState sampler)
     {
         w.Write((uint)texture.Size.x);
@@ -204,14 +218,19 @@ internal static class Program
             byte[] name = System.Text.Encoding.ASCII.GetBytes(type.Name);
             w.Write((ushort)name.Length);
             w.Write(name);
-            object[] arguments = new object[1];
+            ParameterInfo[] parameters = fragment.GetParameters();
+            object[] arguments = new object[parameters.Length];
             for (int y = 0; y < Size; y++)
             {
                 for (int x = 0; x < Size; x++)
                 {
-                    arguments[0] = new float2((x + 0.5f) / Size, (y + 0.5f) / Size);
+                    // The test draws the left half as a back face and the right half as a front face.
+                    for (int i = 0; i < parameters.Length; i++)
+                        arguments[i] = parameters[i].GetCustomAttribute<FrontFacingAttribute>() != null
+                                           ? x >= Size / 2
+                                           : new float2((x + 0.5f) / Size, (y + 0.5f) / Size);
                     ShaderMath.Discarded = false;
-                    float4 color = (float4)fragment.Invoke(null, arguments)!;
+                    float4 color = Color(fragment.Invoke(null, arguments)!);
                     // A discarded fragment leaves the cleared target, which is transparent black.
                     WritePixel(w, ShaderMath.Discarded ? default : color);
                 }

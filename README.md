@@ -296,10 +296,12 @@ Dynamic keywords (decided at run time) are not available yet.
 | fragment output `[Target(n)]` | `SV_Target<n>` |
 | `[Position]` | `SV_Position`, register 0 |
 | `[VertexId]`, `[InstanceId]` | `SV_VertexID`, `SV_InstanceID` |
+| `[FrontFacing]` (fragment input) | `SV_IsFrontFace`, after the locations |
+| `[Depth]` (fragment output) | `SV_Depth` (`oDepth`) |
 | `[Uniform(slot)] static T name` | constant buffer `b<slot>` |
 | `[Texture(slot)] static Texture2D name` | texture `t<slot>` with sampler `s<slot>` |
 
-Not written yet for Direct3D: front facing input, depth output, writing a vector or matrix element with a computed index.
+Not written yet for Direct3D: writing a vector or matrix element with a computed index.
 `asin`, `acos` and `atan` are polynomial approximations (error below 0.001), since the bytecode has no such instructions.
 
 ## Tests
@@ -314,6 +316,8 @@ Not written yet for Direct3D: front facing input, depth output, writing a vector
 - Compute: five kernels (a uniform and a buffer, structs between two buffers on a 2D grid, an in place update with a
   helper that loops and returns early on a 3D grid, counters shared through atomic adds, a storage texture) run on the CPU and are dispatched as GLSL 4.30 and as Direct3D
   bytecode on every adapter; the buffers must be the same byte by byte, texels within the last bit.
+- Stage values: a case reads `[FrontFacing]` (drawn once per winding into the two halves of the target) and a case writes
+  `[Depth]` (a probe at depth 0.5 shows where it wrote more).
 - Bindless: a fragment case with two bindless textures (different samplers) and a bindless buffer, and a kernel that reads one
   bindless buffer and writes another; they run on GL 4.5 with ARB_bindless_texture and on the Direct3D emulation of every
   adapter, and are skipped where the device has no bindless resources.

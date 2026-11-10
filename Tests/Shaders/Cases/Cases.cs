@@ -14,6 +14,11 @@ public static class Fullscreen
         [Location(0)] public float2 uv;
     }
 
+    /// <summary>A constant color at the depth of the fullscreen triangle, drawn after cases that write depth.</summary>
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Probe() => new float4(1.0f, 0.0f, 1.0f, 1.0f);
+
     [VertexShader]
     public static Varyings Vertex([Location(0)] float2 position)
     {
@@ -557,5 +562,34 @@ public static class BindlessResources
             cell = data.count - 1u;
         float4 c = AsFloat(data.colors.Load4(cell * 16u));
         return new float4(a.x * 0.5f + c.x * 0.5f, b.y * 0.5f + c.y * 0.5f, a.z * 0.25f + b.z * 0.25f + c.z * 0.5f, data.colors.Size / 64.0f);
+    }
+}
+
+/// <summary>The left half is drawn as a back face and the right half as a front face.</summary>
+public static class FrontFaces
+{
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv, [FrontFacing] bool front) =>
+        front ? new float4(uv, 0.25f, 1.0f) : new float4(0.75f, uv.y, uv.x, 1.0f);
+}
+
+/// <summary>Writes a depth per pixel; where it is behind the probe (0.5) the probe color wins.</summary>
+public static class Depths
+{
+    public struct Output
+    {
+        [Target(0)] public float4 color;
+        [Depth] public float depth;
+    }
+
+    [FragmentShader]
+    public static Output Fragment([Location(0)] float2 uv)
+    {
+        Output o;
+        o.color = new float4(uv, 0.5f, 1.0f);
+        // Never exactly 0.5, so rounding of the depth buffer cannot decide a pixel.
+        o.depth = uv.x * 0.6f + uv.y * 0.3f + 0.0123f;
+        return o;
     }
 }
