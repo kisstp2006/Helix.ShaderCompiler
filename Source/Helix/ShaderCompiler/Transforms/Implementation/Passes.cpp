@@ -1,6 +1,7 @@
 #include <Helix/ShaderCompiler/Transforms/Passes.h>
 
 #include <Helix/Core/Strings/Format.h>
+#include <Helix/ShaderCompiler/Transforms/Implementation/Optimize.h>
 #include <Helix/ShaderCompiler/Transforms/Simplify.h>
 
 namespace helix::shadercompiler
@@ -352,6 +353,8 @@ namespace helix::shadercompiler
 
         constexpr Pass kPasses[] = {
             {"simplify", SimplifyPass},
+            {"copies", passes::PropagateCopies},
+            {"dead code", passes::RemoveDeadCode},
         };
     }
 

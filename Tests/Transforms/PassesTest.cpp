@@ -122,3 +122,32 @@ HX_TEST(Passes, VerifierFindsDamagedModules)
     m.entry = u32(m.functions.Size());
     Expect(m, "entry point");
 }
+
+HX_TEST(Passes, RemoveDeadCodeAndCopies)
+{
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    // The module after the first pass and at the end.
+    struct Seen
+    {
+        u32 calls = 0;
+        usize localsFirst = 0, localsLast = 0, pickParams = 0;
+    } seen;
+    TranslateOptions options;
+    options.passes.user = &seen;
+    options.passes.dump = [](StringView, const Module& module, void* user) {
+        Seen& s = *static_cast<Seen*>(user);
+        usize locals = module.functions[module.entry].locals.Size();
+        if (s.calls++ == 0)
+            s.localsFirst = locals;
+        s.localsLast = locals;
+        for (const Function& f : module.functions)
+            if (StringView(f.name).Contains("Pick"))
+                s.pickParams = f.params.Size();
+    };
+    Module module;
+    HX_REQUIRE(Translate(a, "DeadCode", module, options));
+    std::printf("    entry locals: %zu after simplify, %zu at the end; Pick takes %zu\n", seen.localsFirst, seen.localsLast, seen.pickParams);
+    // The C# compiler drops the unread local itself; the copy of the parameter is left to the passes.
+    HX_CHECK(seen.localsFirst >= 1 && seen.localsLast == 0 && seen.pickParams == 1);
+}

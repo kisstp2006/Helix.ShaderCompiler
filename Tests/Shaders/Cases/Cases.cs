@@ -1053,3 +1053,18 @@ public static class DynamicKeywords
         return new float4(Saturate(c), 1.0f);
     }
 }
+
+/// <summary>Code the passes remove: a local nothing reads, a copy of a parameter, a parameter a helper never reads.</summary>
+public static class DeadCode
+{
+    private static float Pick(float a, float b) => a * 0.5f;
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        float dead = uv.x * 3.0f;
+        float2 copy = uv;
+        return new float4(Pick(copy.y, uv.x * 2.0f), copy.x, 0.25f, 1.0f);
+    }
+}
