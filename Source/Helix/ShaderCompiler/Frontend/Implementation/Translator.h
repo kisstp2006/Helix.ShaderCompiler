@@ -172,6 +172,8 @@ namespace helix::shadercompiler::frontend
         };
         Array<Compiled> compiled;
         Array<String> building;
+        // Structs and arrays being mapped, to find types that contain themselves.
+        Array<u64> mappingTypes;
 
         // The method a delegate calls and the closure it carries (0 for none: a lambda without captures or a static
         // method).

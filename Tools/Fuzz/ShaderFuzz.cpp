@@ -55,11 +55,28 @@ namespace
         std::fflush(stderr);
         return AssertAction::Abort;
     }
+
+#ifdef _WIN32
+    // A crash (an access violation, a stack overflow) prints its code and where it happened, as a failed check does.
+    LONG WINAPI PrintCrash(EXCEPTION_POINTERS* info)
+    {
+        char what[64];
+        std::snprintf(what, sizeof(what), "exception 0x%08lX", info->ExceptionRecord->ExceptionCode);
+        PrintStack(what, nullptr, "crash", 0);
+        return EXCEPTION_EXECUTE_HANDLER;
+    }
+#endif
 }
 
 int main(int argc, char** argv)
 {
     SetAssertHandler(&PrintStack);
+#ifdef _WIN32
+    // Room to report a stack overflow from its own handler.
+    ULONG reserve = 64 * 1024;
+    SetThreadStackGuarantee(&reserve);
+    SetUnhandledExceptionFilter(&PrintCrash);
+#endif
     if (argc < 2)
     {
         std::fprintf(stderr, "usage: helix_shader_fuzz <seconds> [first round] [progress file]\n");

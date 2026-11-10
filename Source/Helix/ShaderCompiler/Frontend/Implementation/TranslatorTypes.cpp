@@ -74,6 +74,15 @@ namespace helix::shadercompiler::frontend
     {
         if (i32 known = FindKnown(knownArrays, Key(typeRow)); known >= 0)
             return known;
+        // Damaged metadata can make a type contain itself; mapping it would never end.
+        if (mappingTypes.Contains(Key(typeRow)))
+            return Fail(method, Format("type {} contains itself", a->TypeDef(typeRow).name)), -1;
+        mappingTypes.Push(Key(typeRow));
+        struct Done
+        {
+            Array<u64>& list;
+            ~Done() { list.Pop(); }
+        } done{mappingTypes};
         TypeDefInfo t = a->TypeDef(typeRow);
         ArrayType array;
         array.length = length;
@@ -106,6 +115,15 @@ namespace helix::shadercompiler::frontend
     {
         if (i32 known = FindKnown(knownStructs, Key(typeRow)); known >= 0)
             return known;
+        // Damaged metadata can make a type contain itself; mapping it would never end.
+        if (mappingTypes.Contains(Key(typeRow)))
+            return Fail(method, Format("type {} contains itself", a->TypeDef(typeRow).name)), -1;
+        mappingTypes.Push(Key(typeRow));
+        struct Done
+        {
+            Array<u64>& list;
+            ~Done() { list.Pop(); }
+        } done{mappingTypes};
         TypeDefInfo t = a->TypeDef(typeRow);
         StructType s;
         s.name = t.name;
