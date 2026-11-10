@@ -74,6 +74,7 @@ namespace helix::shadercompiler
         {
             const char* name;
             u32 index, systemValue, componentType, reg, mask;
+            bool unused = false;
         };
 
         struct Generator
@@ -81,7 +82,7 @@ namespace helix::shadercompiler
             const Module& m;
             String& error;
             Array<u32> code;
-            u32 tempTop = 0, tempMax = 0;
+            u32 tempTop = 0, tempMax = 0, lastOpcode = ~0u;
             Array<u8> hasLoop;
 
             // One inlined copy of a function: its variables have their own registers.
@@ -123,6 +124,7 @@ namespace helix::shadercompiler
             void Finish(Instruction& in)
             {
                 in.words[0] |= u32(in.words.Size()) << 24;
+                lastOpcode = in.words[0] & 0x7FFu;
                 code.Append(in.words.Data(), in.words.Size());
             }
 
@@ -1316,7 +1318,7 @@ namespace helix::shadercompiler
                     AppendU32(out, e.componentType);
                     AppendU32(out, e.reg);
                     // The last byte pair: the mask, then the components read (inputs) or never written (outputs).
-                    AppendU32(out, e.mask | ((isOutput ? ~e.mask & 0xFu : e.mask) << 8));
+                    AppendU32(out, e.mask | ((isOutput ? ~e.mask & 0xFu : e.unused ? 0u : e.mask) << 8));
                     nameOffset += u32(std::strlen(e.name)) + 1;
                 }
                 for (const SignatureElement& e : elements)
@@ -1402,6 +1404,12 @@ namespace helix::shadercompiler
                     else if (!Input(p.semantic, p.semanticIndex, p.type, p.flat, places[0], systemRegister, Format("parameter {}", p.name)))
                         return false;
                 }
+                // The fragment signature lists the position the vertex stage always writes, read or not.
+                bool position = false;
+                for (const SignatureElement& e : inputs)
+                    position = position || e.systemValue == 1;
+                if (m.stage == Stage::Fragment && !position)
+                    inputs.Push({"SV_Position", 0, 1, 3, 0, 0xF, true});
                 Type r = fn.returnType;
                 if (r.base == BaseType::Struct)
                 {
@@ -1418,7 +1426,9 @@ namespace helix::shadercompiler
 
                 if (!Statements(entry, fn.body))
                     return false;
-                Simple(kRet);
+                // Nothing may follow the last ret; the software rasterizer loses the device on it.
+                if (lastOpcode != kRet)
+                    Simple(kRet);
 
                 // Shader chunk: version, length, declarations, code.
                 Array<u32> body;
