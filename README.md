@@ -20,7 +20,7 @@ model 5.0 bytecode.
 | `Source/Helix/ShaderCompiler/Material/` | `BindProperties`: where each material property of a shader goes in one compiled pass, and the default block data |
 | `Source/Helix/ShaderCompiler/Reflection/` | `Reflect` and `LinkReflection`: uniform block layouts, resource slots, stage inputs and outputs of a compiled variant, and whether two stages fit |
 | `Source/Helix/ShaderCompiler/Transforms/` | The passes on a translated module (`ShaderPasses`, one table), `RunPasses`, `LinkStages` (vertex outputs the fragment stage of the variant does not read are not written), `VerifyModule` and `PrintModule`; `Simplify`: constant folding, constant locals, removal of code, functions and resources that cannot be reached; counted loops unrolled (`[Unroll]` and `[Loop]` on a method, else short and small loops); struct locals split into one local per field; copy propagation; common subexpressions in straight runs of statements; dead stores, locals and helper parameters |
-| `Source/Helix/ShaderCompiler/Backends/` | `EmitGlsl`: a module to GLSL source with its binding table; `EmitDxbc`: a module to a Direct3D bytecode container |
+| `Source/Helix/ShaderCompiler/Backends/` | `EmitGlsl`: a module to GLSL source with its binding table; `EmitDxbc`: a module to a Direct3D bytecode container; `EmitHlsl`: shader model 5 HLSL text of a module, for reading only (error reports and dumps next to the bytecode) |
 | `Tests/Shaders/` | C# test shaders, built with the .NET SDK during the CMake build and embedded into the test program |
 | `Tests/Includes/` | C# assembly the test shaders call into, the way shaders use include files |
 | `Tests/Oracle/` | C# program that runs the test shaders on the CPU and writes the images the GPU must reproduce |
@@ -392,6 +392,9 @@ cannot be indexed.
   vertex stage linked to it.
 - Measurement: every case and kernel compiled with and without the optimizing passes (`PassOptions::optimize`), with
   the Direct3D instructions and the GLSL size of each printed.
+- HLSL text: registers, samplers with their textures, cbuffers, mul with swapped operands for the transposed matrices,
+  numthreads and atomics, and an HLSL form for every case and kernel; printed when Direct3D rejects a shader and with
+  HELIX_PRINT_SHADERS.
 - Kernel variants: a kernel with a bool and an enum keyword runs once per combination, compiled through the cache; the
   variants of the kernels of a compute definition for the three compute targets.
 - Dynamic keywords: a bool and an enum read from the keyword block next to a plain keyword, every combination; the

@@ -4,6 +4,7 @@
 #include <Helix/RHI/Device/Device.h>
 #include <Helix/ShaderCompiler/Backends/Dxbc.h>
 #include <Helix/ShaderCompiler/Backends/Glsl.h>
+#include <Helix/ShaderCompiler/Backends/Hlsl.h>
 #include <Helix/ShaderCompiler/Frontend/Frontend.h>
 #include <Helix/ShaderCompiler/Transforms/Link.h>
 #include <Helix/ShaderCompiler/Reflection/Reflection.h>
@@ -321,8 +322,8 @@ void RunCases(Device& d, bool direct3d)
                 caseOk = false;
                 break;
             }
-            // HELIX_PRINT_SHADERS=<case name> shows the generated fragment shader of one case; bytecode goes to <case>.dxbc
-            // and Fullscreen.dxbc in the working directory.
+            // HELIX_PRINT_SHADERS=<case name> shows the generated fragment shader of one case (HLSL text for the bytecode);
+            // bytecode goes to <case>.dxbc and Fullscreen.dxbc in the working directory.
             const char* print = std::getenv("HELIX_PRINT_SHADERS");
             if (print && name == StringView(print) && version == 0)
             {
@@ -337,6 +338,9 @@ void RunCases(Device& d, bool direct3d)
                             std::fwrite(dumps[i]->bytes.Data(), 1, dumps[i]->bytes.Size(), f);
                             std::fclose(f);
                         }
+                    String hlsl, hlslError;
+                    if (EmitHlsl(fragmentModule, hlsl, hlslError))
+                        std::printf("%s\n", hlsl.CStr());
                 }
                 else
                     std::printf("%s\n", fragmentShader.source.CStr());
@@ -374,7 +378,11 @@ void RunCases(Device& d, bool direct3d)
                 pipeline = PipelineHandle{};
             if (!pipeline.IsValid())
             {
-                std::printf("    %s: the generated shader was rejected by the driver:\n%s\n", label.CStr(), fragmentShader.source.CStr());
+                // For the bytecode the HLSL form is what can be read.
+                String hlsl, hlslError;
+                if (direct3d)
+                    EmitHlsl(fragmentModule, hlsl, hlslError);
+                std::printf("    %s: the generated shader was rejected by the driver:\n%s\n", label.CStr(), direct3d ? hlsl.CStr() : fragmentShader.source.CStr());
                 caseOk = false;
             }
             else

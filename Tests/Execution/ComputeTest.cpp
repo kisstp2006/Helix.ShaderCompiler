@@ -5,6 +5,7 @@
 #include <Helix/ShaderCompiler/Backends/Dxbc.h>
 #include <Helix/ShaderCompiler/Backends/Glsl.h>
 #include <Helix/ShaderCompiler/Cache/ShaderCache.h>
+#include <Helix/ShaderCompiler/Backends/Hlsl.h>
 #include <Helix/ShaderCompiler/Frontend/Frontend.h>
 #include <Helix/Testing/Test.h>
 
@@ -205,8 +206,11 @@ namespace
                     std::fwrite(compiled.code.Data(), 1, compiled.code.Size(), f);
                     std::fclose(f);
                 }
+                String hlsl, hlslError;
                 if (!direct3d)
                     std::printf("%s\n", String(compiled.Text()).CStr());
+                else if (EmitHlsl(module, hlsl, hlslError))
+                    std::printf("%s\n", hlsl.CStr());
             }
             ShaderHandle shader;
             PipelineHandle pipeline;
@@ -226,7 +230,12 @@ namespace
                 pipeline = shader.IsValid() ? d.CreateComputePipeline({shader, "kernel"}) : PipelineHandle{};
                 ok = pipeline.IsValid();
                 if (!ok)
-                    std::printf("    %s: the generated shader was rejected by the driver:\n%s\n", label.CStr(), direct3d ? "" : String(compiled.Text()).CStr());
+                {
+                    String hlsl, hlslError;
+                    if (direct3d)
+                        EmitHlsl(module, hlsl, hlslError);
+                    std::printf("    %s: the generated shader was rejected by the driver:\n%s\n", label.CStr(), direct3d ? hlsl.CStr() : String(compiled.Text()).CStr());
+                }
             }
             if (ok)
             {
