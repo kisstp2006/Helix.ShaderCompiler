@@ -86,9 +86,11 @@ if(TARGET helix_shader_compiler_tests)
             DEPENDS helix_export_shaders "${tests_dll}"
             COMMENT "Exporting the shaders of the Helix.RHI tests")
         add_custom_target(export_rhi_shaders ALL DEPENDS "${generated}/CompiledShaders.h")
-        # Mutated copies of the test assemblies through every reader, the translation and the backends.
-        helix_add_executable(helix_shader_fuzz TOOL SOURCES Tools/Fuzz/ShaderFuzz.cpp ${embedded} DEPS Helix::ShaderCompiler)
-        target_include_directories(helix_shader_fuzz PRIVATE "${generated}" "${CMAKE_CURRENT_SOURCE_DIR}/Tests")
+    endif()
+    # Mutated copies of the test assemblies through every reader, the translation and the backends.
+    helix_add_fuzz_suite(helix_shader_fuzz DEPS Helix::ShaderCompiler EXTRA_SOURCES ${embedded})
+    if(TARGET helix_shader_fuzz)
+        target_include_directories(helix_shader_fuzz PRIVATE "${generated}")
     endif()
     foreach(suite helix_shader_compiler_tests helix_shader_compiler_tests_discrete_gpu)
         if(TARGET ${suite})

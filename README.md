@@ -408,10 +408,10 @@ cannot be indexed.
   swizzles, integer bits, comparisons, nested branches, while and do loops, switches, math, geometry, clamping,
   matrices, struct returns, call chains, generics, conversions, constants, discard in a loop, half vectors, ternaries
   and bit casts; kernels for a scan, a matrix product, an image grid and nested struct buffers.
-- Fuzzing: `helix_shader_fuzz <seconds> [first round]` mutates copies of the test assemblies and PDBs (reproducible per
-  round) and runs the readers, the translation of every entry point and the three backends; a hang of a minute aborts,
-  a failed check prints its call stack. Fuzz.MutatedAssembliesAreReadSafely runs 40 rounds in the tests. Damaged input
-  is an error naming what is wrong, never a crash.
+- Fuzzing: `helix_shader_fuzz --seconds=<s> [--first=<round>]` (Fuzz/ShaderFuzz.cpp on the Helix.Testing fuzz runner)
+  mutates copies of the test assemblies and PDBs (reproducible per round) and runs the readers, the translation of
+  every entry point and the three backends; a hang, a failed check or a crash prints the round, the command that runs
+  it again and the call stack. CTest runs 40 rounds. Damaged input is an error naming what is wrong, never a crash.
 - Cache levels: source keys are stable, depend on keyword values but not their order and on the target, change with an
   edited method body only for the shaders that reach it; a second compile skips the frontend; the variants of a pass
   compiled in parallel equal those compiled one after the other (run 60 times).
