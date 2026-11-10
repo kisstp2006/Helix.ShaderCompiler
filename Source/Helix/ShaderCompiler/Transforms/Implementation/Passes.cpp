@@ -124,6 +124,12 @@ namespace helix::shadercompiler
                         return Fail("an unknown intrinsic");
                     if (e.args.Size() != IntrinsicArity(e.intrinsic))
                         return Fail(Format("{} takes {} arguments and gets {}", IntrinsicName(e.intrinsic), IntrinsicArity(e.intrinsic), e.args.Size()));
+                    for (ExprId operand : e.args)
+                    {
+                        Type t = f->exprs[operand].type;
+                        if (t.IsVoid() || t.base == BaseType::Struct)
+                            return Fail(Format("an argument of {} that is not a value it takes", IntrinsicName(e.intrinsic)));
+                    }
                     break;
                 default: break;
                 }

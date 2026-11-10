@@ -978,6 +978,8 @@ namespace helix::shadercompiler
                     }
                     if (!Eval(in, id, args.Emplace()))
                         return false;
+                    if (args.Back().parts.Empty())
+                        return Fail(Format("an argument of {} that has no value", IntrinsicName(e.intrinsic)));
                 }
                 Type rt = e.type;
                 u32 n = rt.rows;
