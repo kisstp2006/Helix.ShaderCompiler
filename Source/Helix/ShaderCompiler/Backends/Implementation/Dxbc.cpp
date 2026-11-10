@@ -21,6 +21,7 @@ namespace helix::shadercompiler
             kSincos = 77, kUdiv = 78, kUlt = 79, kUge = 80, kUmax = 83, kUmin = 84, kUshr = 85, kUtof = 86, kXor = 87,
             kDclResource = 88, kDclConstantBuffer = 89, kDclSampler = 90, kDclInput = 95, kDclInputSgv = 96, kDclInputPs = 98,
             kDclInputPsSiv = 100, kDclOutput = 101, kDclOutputSiv = 103, kDclTemps = 104,
+            kBufinfo = 121, kDclThreadGroup = 155, kDclUavStructured = 158, kDclResourceStructured = 162, kLdStructured = 167, kStoreStructured = 168,
         };
         constexpr u32 kTestNonZero = 1u << 18;
         constexpr u32 kSaturate = 1u << 13;
@@ -41,6 +42,8 @@ namespace helix::shadercompiler
                 Input,
                 Immediate,
                 Buffer,
+                // The dispatch thread id of a compute shader.
+                ThreadId,
             };
             Kind kind = Temp;
             u8 count = 1;
@@ -103,6 +106,9 @@ namespace helix::shadercompiler
             };
             Array<Resource> buffers;
             Array<u32> textures;
+            // Storage buffers in use, as indices of the module's globals.
+            Array<u32> storages;
+            bool threadId = false;
 
             Generator(const Module& module, String& e) : m(module), error(e) {}
 
@@ -156,8 +162,8 @@ namespace helix::shadercompiler
                     }
                     return;
                 }
-                u32 type = s.kind == Src::Temp ? 0u : s.kind == Src::Input ? 1u : 8u;
-                u32 dimension = s.kind == Src::Buffer ? 2u : 1u;
+                u32 type = s.kind == Src::Temp ? 0u : s.kind == Src::Input ? 1u : s.kind == Src::ThreadId ? 0x20u : 8u;
+                u32 dimension = s.kind == Src::Buffer ? 2u : s.kind == Src::ThreadId ? 0u : 1u;
                 u32 selection;
                 if (select >= 0)
                     selection = 0xAu | (u32(s.Component(u32(select))) << 4);
@@ -166,7 +172,8 @@ namespace helix::shadercompiler
                 in.words.Push(selection | (type << 12) | (dimension << 20) | (s.modifier ? 0x80000000u : 0u));
                 if (s.modifier)
                     in.words.Push(0x1u | (u32(s.modifier) << 6));
-                in.words.Push(s.reg);
+                if (s.kind != Src::ThreadId)
+                    in.words.Push(s.reg);
                 if (s.kind == Src::Buffer)
                     in.words.Push(s.index);
             }
@@ -422,6 +429,135 @@ namespace helix::shadercompiler
                 }
             }
 
+            // ---------------------------------------------------------------- storage buffers
+
+            // One component operand: an immediate is written as a scalar.
+            static void PutScalar(Instruction& in, const Src& s)
+            {
+                if (s.kind != Src::Immediate)
+                    return PutSrc(in, s, 0);
+                in.words.Push(0x00004001u);
+                in.words.Push(s.imm[s.Component(0)]);
+            }
+
+            // Operand of a storage buffer: a view register (u) when writable, a resource register (t) otherwise.
+            void PutStorage(Instruction& in, u32 global, u32 modeAndSwizzle)
+            {
+                const Global& g = m.globals[global];
+                if (!storages.Find(global))
+                    storages.Push(global);
+                in.words.Push((g.writable ? 0x0011E000u : 0x00107000u) | modeAndSwizzle);
+                in.words.Push(g.writable ? g.slot : 16u + g.slot);
+            }
+
+            // Structured buffer instructions carry the resource kind with the element size, and the return type.
+            void PutStructuredInfo(Instruction& in, u32 global)
+            {
+                in.words[0] |= 0x80000000u;
+                in.words.Push(0x80000002u | (12u << 6) | (SequentialSize(m, m.globals[global].element) << 11));
+                in.words.Push(0x00199983u);
+            }
+
+            // Reads the value of a type that starts `offset` bytes into element `index`.
+            Value BufferLoad(u32 global, const Src& index, u32 offset, Type type)
+            {
+                Value v;
+                v.type = type;
+                Array<Type> leaves;
+                Leaves(type, leaves);
+                for (const Type& leaf : leaves)
+                {
+                    Src d = NewTemp(leaf.rows, IsFloat(leaf));
+                    Instruction in(kLdStructured);
+                    PutStructuredInfo(in, global);
+                    PutDst(in, Whole(d));
+                    PutScalar(in, index);
+                    PutScalar(in, ImmI(offset));
+                    PutStorage(in, global, 0xE46u);
+                    Finish(in);
+                    v.parts.Push(d);
+                    offset += 4u * leaf.rows;
+                }
+                return v;
+            }
+
+            void BufferStore(u32 global, const Src& index, u32 offset, const Value& v)
+            {
+                for (const Src& part : v.parts)
+                {
+                    Instruction in(kStoreStructured);
+                    PutStorage(in, global, 0x2u | (((1u << part.count) - 1u) << 4));
+                    PutScalar(in, index);
+                    PutScalar(in, ImmI(offset));
+                    PutSrc(in, part);
+                    Finish(in);
+                    offset += 4u * part.count;
+                }
+            }
+
+            // An assignment target inside a buffer element: which buffer and element, where in it, and for a write to
+            // some components of a vector which ones.
+            struct BufferTarget
+            {
+                u32 global = 0, offset = 0;
+                Src index;
+                Type type;
+                bool partial = false;
+                u8 comps[4] = {0, 1, 2, 3};
+                u8 count = 0;
+            };
+
+            bool IsStorage(const Instance& in, ExprId id) const
+            {
+                const Expr& e = in.fn->exprs[id];
+                return e.kind == ExprKind::Global && m.globals[e.index].kind == GlobalKind::Storage;
+            }
+
+            // 1 when the target is in a buffer, 0 when it is not, -1 on an error.
+            int FindBufferTarget(Instance& in, ExprId id, BufferTarget& out)
+            {
+                const Expr& e = in.fn->exprs[id];
+                if (e.kind == ExprKind::Index && IsStorage(in, e.a))
+                {
+                    Value index;
+                    if (!Eval(in, e.b, index))
+                        return -1;
+                    out.global = in.fn->exprs[e.a].index;
+                    out.index = index.parts[0].kind == Src::Immediate ? index.parts[0] : Scalar(index.parts[0]);
+                    out.type = e.type;
+                    return 1;
+                }
+                if (e.kind != ExprKind::Field && e.kind != ExprKind::Swizzle && e.kind != ExprKind::Index)
+                    return 0;
+                int found = FindBufferTarget(in, e.a, out);
+                if (found != 1)
+                    return found;
+                if (out.partial)
+                    return Fail("this write into a buffer element is too deep for the Direct3D backend") ? 1 : -1;
+                if (e.kind == ExprKind::Field)
+                {
+                    const StructType& owner = m.structs[out.type.structIndex];
+                    for (u32 f = 0; f < e.index; f++)
+                        out.offset += SequentialSize(m, owner.fields[f].type);
+                    out.type = e.type;
+                    return 1;
+                }
+                const Expr* index = e.kind == ExprKind::Index ? &in.fn->exprs[e.b] : nullptr;
+                if (index && index->kind != ExprKind::ConstInt)
+                    return Fail("writing a vector or matrix element of a buffer with a computed index is not supported by the Direct3D backend yet") ? 1 : -1;
+                if (index && out.type.IsMatrix())
+                {
+                    out.offset += u32(index->integer) * 4u * out.type.rows;
+                    out.type = Type::Vector(BaseType::Float, out.type.rows);
+                    return 1;
+                }
+                out.partial = true;
+                out.count = index ? 1 : e.swizzleCount;
+                for (u32 i = 0; i < out.count; i++)
+                    out.comps[i] = index ? u8(index->integer & 3) : e.swizzle[i];
+                return 1;
+            }
+
             // ---------------------------------------------------------------- expressions
 
             static bool IsFloat(Type t) { return t.base == BaseType::Float; }
@@ -572,6 +708,16 @@ namespace helix::shadercompiler
                 for (ExprId id : e.args)
                 {
                     const Expr& arg = in.fn->exprs[id];
+                    if (arg.type.base == BaseType::Buffer)
+                    {
+                        if (!IsStorage(in, id))
+                            return Fail("a buffer must be used directly from its static field");
+                        Value v;
+                        v.type = arg.type;
+                        v.parts.Push(ImmI(arg.index));
+                        args.Push(Move(v));
+                        continue;
+                    }
                     if (arg.type.base == BaseType::Texture2D)
                     {
                         // Textures are named by their slot; they have no value of their own.
@@ -781,6 +927,17 @@ namespace helix::shadercompiler
                     Finish(ins);
                     return result(d);
                 }
+                case Intrinsic::BufferLength:
+                {
+                    u32 global = arg(0).imm[0];
+                    Src d = NewTemp(1, false);
+                    Instruction ins(kBufinfo);
+                    PutStructuredInfo(ins, global);
+                    PutDst(ins, Whole(d));
+                    PutStorage(ins, global, 0x006u);
+                    Finish(ins);
+                    return result(d);
+                }
                 case Intrinsic::TextureSize:
                 {
                     u32 slot = arg(0).imm[0];
@@ -875,6 +1032,13 @@ namespace helix::shadercompiler
                 case ExprKind::Index:
                 {
                     Value whole, index;
+                    if (IsStorage(in, e.a))
+                    {
+                        if (!Eval(in, e.b, index))
+                            return false;
+                        out = BufferLoad(in.fn->exprs[e.a].index, index.parts[0].kind == Src::Immediate ? index.parts[0] : Scalar(index.parts[0]), 0, e.type);
+                        return true;
+                    }
                     if (!Eval(in, e.a, whole) || !Eval(in, e.b, index))
                         return false;
                     bool matrix = whole.type.IsMatrix();
@@ -1125,7 +1289,28 @@ namespace helix::shadercompiler
                 case StmtKind::Assign:
                 {
                     Array<Dst> places;
-                    if (!Eval(in, s.b, value) || !Place(in, s.a, places))
+                    if (!Eval(in, s.b, value))
+                        return false;
+                    BufferTarget buffer;
+                    if (int found = FindBufferTarget(in, s.a, buffer))
+                    {
+                        if (found < 0)
+                            return false;
+                        if (buffer.partial)
+                        {
+                            // Some components of a vector: read it, change them, write it back.
+                            Value whole = BufferLoad(buffer.global, buffer.index, buffer.offset, buffer.type);
+                            Dst d = Whole(whole.parts[0]);
+                            d.count = buffer.count;
+                            for (u32 i = 0; i < buffer.count; i++)
+                                d.comps[i] = buffer.comps[i];
+                            Store(d, value.parts[0]);
+                            value = Move(whole);
+                        }
+                        BufferStore(buffer.global, buffer.index, buffer.offset, value);
+                        return true;
+                    }
+                    if (!Place(in, s.a, places))
                         return false;
                     if (places.Size() > 1)
                     {
@@ -1232,6 +1417,18 @@ namespace helix::shadercompiler
 
             bool Input(Semantic semantic, u32 index, Type type, bool flat, const Dst& target, u32& nextSystemRegister, StringView what)
             {
+                if (m.stage == Stage::Compute)
+                {
+                    if (semantic != Semantic::DispatchThreadId || type.rows != 3 || !type.IsInteger())
+                        return Fail(Format("{}: a compute shader takes a uint3 or int3 [DispatchThreadId]", what));
+                    Src id;
+                    id.kind = Src::ThreadId;
+                    id.count = 3;
+                    id.isFloat = false;
+                    threadId = true;
+                    Store(target, id);
+                    return true;
+                }
                 bool vertex = m.stage == Stage::Vertex;
                 u32 mask = (1u << type.rows) - 1;
                 Src s;
@@ -1360,8 +1557,12 @@ namespace helix::shadercompiler
             bool Run(DxbcShader& shader)
             {
                 for (const Global& g : m.globals)
+                {
                     if (g.kind == GlobalKind::Uniform && (g.type.base != BaseType::Struct || !CheckUniformLayout(m, g.type, g.name, 0, 0, error)))
                         return Fail(Format("uniform {} must be a struct", g.name));
+                    if (g.kind == GlobalKind::Storage && !CheckBufferLayout(m, g.element, g.name, error))
+                        return false;
+                }
                 for (const Function& f : m.functions)
                     hasLoop.Push(ContainsLoop(f.body) ? 1 : 0);
 
@@ -1442,13 +1643,34 @@ namespace helix::shadercompiler
                     u32 words[] = {kDclSampler | (3u << 24), 0x00106000u, slot, kDclResource | (3u << 11) | (4u << 24), 0x00107000u, slot, 0x00005555u};
                     body.Append(words, 7);
                 }
+                for (u32 global : storages)
+                {
+                    const Global& g = m.globals[global];
+                    u32 stride = SequentialSize(m, g.element);
+                    u32 words[] = {(g.writable ? kDclUavStructured : kDclResourceStructured) | (4u << 24), g.writable ? 0x0011E000u : 0x00107000u,
+                                   g.writable ? g.slot : 16u + g.slot, stride};
+                    body.Append(words, 4);
+                }
                 body.Append(declarations.Data(), declarations.Size());
+                if (threadId)
+                {
+                    u32 words[] = {kDclInput | (2u << 24), 0x00020072u};
+                    body.Append(words, 2);
+                }
                 u32 temps[] = {kDclTemps | (2u << 24), Max(tempMax, 1u)};
                 body.Append(temps, 2);
+                bool compute = m.stage == Stage::Compute;
+                if (compute)
+                {
+                    u32 words[] = {kDclThreadGroup | (4u << 24), m.groupSize[0], m.groupSize[1], m.groupSize[2]};
+                    body.Append(words, 4);
+                }
                 body.Append(code.Data(), code.Size());
 
+                // Structured buffers and compute exist from shader model 5.
+                bool model5 = compute || !storages.Empty();
                 Array<u8> shdr;
-                AppendU32(shdr, (m.stage == Stage::Vertex ? 0x00010000u : 0u) | 0x40u);
+                AppendU32(shdr, (compute ? 0x00050000u : m.stage == Stage::Vertex ? 0x00010000u : 0u) | (model5 ? 0x50u : 0x40u));
                 AppendU32(shdr, u32(body.Size()) + 2);
                 Append(shdr, body.Data(), body.Size() * 4);
 
@@ -1457,7 +1679,7 @@ namespace helix::shadercompiler
                 {
                     const char* tag;
                     const Array<u8>* data;
-                } chunks[] = {{"ISGN", &isgn}, {"OSGN", &osgn}, {"SHDR", &shdr}};
+                } chunks[] = {{"ISGN", &isgn}, {"OSGN", &osgn}, {model5 ? "SHEX" : "SHDR", &shdr}};
                 Array<u8>& out = shader.bytes;
                 out.Clear();
                 Append(out, "DXBC", 4);

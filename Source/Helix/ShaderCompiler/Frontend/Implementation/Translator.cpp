@@ -229,8 +229,24 @@ namespace helix::shadercompiler
                     out = Type::Struct(u32(index));
                     return true;
                 }
+                case ElementType::GenericInst:
+                    if (!IsBufferType(sig))
+                        return false;
+                    out = Type::Scalar(BaseType::Buffer);
+                    return true;
                 default: return false;
                 }
+            }
+
+            // StructuredBuffer<T> or RWStructuredBuffer<T> of the shader library.
+            bool IsBufferType(const TypeSig& sig, bool* writable = nullptr) const
+            {
+                StringView ns, name;
+                if (sig.kind != ElementType::GenericInst || sig.args.Size() != 1 || !a.TypeName(sig.token, ns, name) || ns != kLibrary)
+                    return false;
+                if (writable)
+                    *writable = name.StartsWith("RW");
+                return name.StartsWith("StructuredBuffer") || name.StartsWith("RWStructuredBuffer");
             }
 
             // ---------------------------------------------------------------- expressions
@@ -535,7 +551,8 @@ namespace helix::shadercompiler
                 {
                     StringView attribute;
                     GlobalKind kind;
-                } kKinds[] = {{"UniformAttribute", GlobalKind::Uniform}, {"TextureAttribute", GlobalKind::Texture}, {"SamplerAttribute", GlobalKind::Sampler}};
+                } kKinds[] = {{"UniformAttribute", GlobalKind::Uniform}, {"TextureAttribute", GlobalKind::Texture}, {"SamplerAttribute", GlobalKind::Sampler},
+                              {"StorageAttribute", GlobalKind::Storage}};
                 Array<AttributeArgument> fixed;
                 for (const auto& k : kKinds)
                 {
@@ -549,15 +566,55 @@ namespace helix::shadercompiler
                     bool byRef = false;
                     if (!ParseFieldSignature(field.signature, sig) || !MapType(sig, &mt, g.type, byRef, mt.name))
                         return Fail(mt.name, Format("resource {} has a type that shaders cannot use", field.name));
+                    if ((k.kind == GlobalKind::Storage) != (g.type.base == BaseType::Buffer))
+                        return Fail(mt.name, Format("{}: [Storage] goes with StructuredBuffer and RWStructuredBuffer fields", field.name));
+                    if (k.kind == GlobalKind::Storage && (!IsBufferType(sig, &g.writable) || !MapType(sig.args[0], &mt, g.element, byRef, mt.name) ||
+                                                          !(g.element.IsNumeric() || g.element.base == BaseType::Struct)))
+                        return Fail(mt.name, Format("buffer {} has an element type that shaders cannot use", field.name));
                     m.globals.Push(Move(g));
                     fieldGlobals.Push({row, i32(m.globals.Size() - 1)});
                     out = {Leaf(mt, ExprKind::Global, u32(m.globals.Size() - 1), m.globals.Back().type), true};
                     return true;
                 }
-                return Fail(mt.name, Format("static field {} is not a resource: mark it [Uniform], [Texture], [Sampler] or [Keyword]", field.name));
+                return Fail(mt.name, Format("static field {} is not a resource: mark it [Uniform], [Texture], [Sampler], [Storage] or [Keyword]", field.name));
             }
 
             // ---------------------------------------------------------------- calls
+
+            // Indexer and length of a storage buffer; an element is the Index expression of the buffer.
+            bool BufferCall(Method& mt, StringView member, Array<Item>& args)
+            {
+                const Expr& self = mt.fn.exprs[args[0].e];
+                if (self.kind != ExprKind::Global || m.globals[self.index].kind != GlobalKind::Storage)
+                    return Fail(mt.name, "a buffer must be used directly from its static field");
+                Type element = m.globals[self.index].element;
+                bool writable = m.globals[self.index].writable;
+                StringView name = m.globals[self.index].name;
+                Expr e;
+                if (member == "get_Length")
+                {
+                    e.kind = ExprKind::Intrinsic;
+                    e.intrinsic = Intrinsic::BufferLength;
+                    e.type = kInt;
+                    e.args.Push(args[0].e);
+                    Push(mt, AddExpr(mt.fn, Move(e)));
+                    return true;
+                }
+                if ((member != "get_Item" && member != "set_Item") || args.Size() < 2)
+                    return Fail(mt.name, Format("buffer member {} is not available in shaders", member));
+                e.kind = ExprKind::Index;
+                e.a = args[0].e;
+                e.b = Coerce(mt, args[1].e, kInt);
+                e.type = element;
+                ExprId item = AddExpr(mt.fn, Move(e));
+                if (member == "get_Item")
+                    Push(mt, item);
+                else if (!writable || args.Size() != 3)
+                    return Fail(mt.name, Format("buffer {} is read only", name));
+                else
+                    Assign(mt, item, args[2].e);
+                return true;
+            }
 
             // Members of the vector and matrix types and the functions of the shader library.
             bool LibraryCall(Method& mt, StringView typeName, StringView member, const MethodSig& sig, Array<Item>& args, bool isNew)
@@ -752,7 +809,7 @@ namespace helix::shadercompiler
                 }
                 MethodSig sig;
                 StringView ns, typeName, member;
-                bool user = token.Is(Table::MethodDef);
+                bool user = token.Is(Table::MethodDef), buffer = false;
                 if (user)
                 {
                     MethodInfo info = a.Method(token.Row());
@@ -764,7 +821,14 @@ namespace helix::shadercompiler
                 {
                     MemberRefInfo ref = a.MemberRef(token.Row());
                     member = ref.name;
-                    if (!ParseMethodSignature(ref.signature, sig) || !a.TypeName(ref.parent, ns, typeName))
+                    TypeSig spec;
+                    if (ref.parent.Is(Table::TypeSpec) && ParseTypeSpec(a.TypeSpecSignature(ref.parent.Row()), spec) && IsBufferType(spec))
+                    {
+                        buffer = true;
+                        if (!ParseMethodSignature(ref.signature, sig))
+                            return Fail(mt.name, "damaged method signature");
+                    }
+                    else if (!ParseMethodSignature(ref.signature, sig) || !a.TypeName(ref.parent, ns, typeName))
                         return Fail(mt.name, Format("call to {} cannot be resolved (generic library types are not supported yet)", ref.name));
                 }
                 else
@@ -778,6 +842,8 @@ namespace helix::shadercompiler
                 for (u32 i = count; i-- > 0;)
                     args[i] = Pop(mt);
 
+                if (buffer)
+                    return BufferCall(mt, member, args);
                 if (!user)
                 {
                     if (ns != kLibrary)
@@ -1289,6 +1355,22 @@ namespace helix::shadercompiler
                 bool flat;
                 out.returnSemantic = t.ReadSemantic(Token(Table::Param, p), out.returnSemanticIndex, flat);
             }
+        if (stage == Stage::Compute)
+        {
+            Array<AttributeArgument> size;
+            if (!t.Has(Token(Table::MethodDef, method), "ComputeShaderAttribute", &size) || size.Size() != 3)
+            {
+                error = Format("{}: a compute shader needs [ComputeShader(x, y, z)]", info.name);
+                return false;
+            }
+            for (usize i = 0; i < 3; i++)
+                out.groupSize[i] = u32(size[i].integer);
+            if (!out.functions[out.entry].returnType.IsVoid())
+            {
+                error = Format("{}: a compute shader returns nothing; it writes buffers", info.name);
+                return false;
+            }
+        }
         Simplify(out);
         return true;
     }

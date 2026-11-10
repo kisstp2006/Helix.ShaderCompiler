@@ -117,6 +117,7 @@ void RunCases(Device& d, bool direct3d)
 
     Reader r{ShaderExpectations()};
     u32 size = r.U32(), caseCount = r.U32();
+    r.U32();
     HX_REQUIRE(size == 16 && caseCount >= 10);
 
     const f32 triangle[] = {-1, -1, 3, -1, -1, 3};

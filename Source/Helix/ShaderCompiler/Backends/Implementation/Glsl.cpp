@@ -214,6 +214,10 @@ namespace helix::shadercompiler
                     Value(e.args[0]);
                     out.Append(", 0)");
                     return true;
+                case Intrinsic::BufferLength:
+                    Value(e.args[0]);
+                    out.Append(".length()");
+                    return true;
                 default: return call(IntrinsicName(e.intrinsic));
                 }
             }
@@ -476,6 +480,11 @@ namespace helix::shadercompiler
                         return Fail(Format("{}: [FrontFacing] is a fragment input", what));
                     expression = "gl_FrontFacing";
                     return true;
+                case Semantic::DispatchThreadId:
+                    if (m.stage != Stage::Compute || !input || type.rows != 3 || !type.IsInteger())
+                        return Fail(Format("{}: [DispatchThreadId] is a uint3 or int3 input of a compute shader", what));
+                    expression = Format("{}(gl_GlobalInvocationID)", TypeName(type));
+                    return true;
                 default: return Fail(Format("{} has no stage attribute such as [Location(n)] or [Position]", what));
                 }
             }
@@ -534,14 +543,26 @@ namespace helix::shadercompiler
                         return false;
                     FormatAppend(body, "    {} = {};\n", expression, call);
                 }
+                if (m.stage == Stage::Compute)
+                    FormatAppend(out, "\nlayout(local_size_x = {}, local_size_y = {}, local_size_z = {}) in;\n", m.groupSize[0], m.groupSize[1],
+                                 m.groupSize[2]);
                 FormatAppend(out, "\nvoid main()\n{{\n{}}}\n", body);
                 return true;
             }
 
             bool Run(GlslShader& shader)
             {
-                out.Append(target == GlslTarget::Glsl330 ? "#version 330 core\n" : target == GlslTarget::Glsl450 ? "#version 450 core\n"
-                                                                                                                  : "#version 300 es\nprecision highp float;\nprecision highp int;\n");
+                static constexpr const char* kHeaders[] = {
+                    "#version 330 core\n",
+                    "#version 450 core\n",
+                    "#version 300 es\nprecision highp float;\nprecision highp int;\n",
+                    "#version 430 core\n",
+                    "#version 310 es\nprecision highp float;\nprecision highp int;\n",
+                };
+                out.Append(kHeaders[u32(target)]);
+                bool modern = target == GlslTarget::Glsl430 || target == GlslTarget::Glsl450 || target == GlslTarget::Essl310;
+                if (m.stage == Stage::Compute && !modern)
+                    return Fail("compute shaders need GLSL 4.30 or GLSL ES 3.10");
                 for (usize i = 0; i < m.structs.Size(); i++)
                 {
                     FormatAppend(out, "struct {}\n{{\n", TypeName(Type::Struct(u32(i))));
@@ -559,6 +580,15 @@ namespace helix::shadercompiler
                             return false;
                         FormatAppend(out, "layout(std140) uniform hx_block_{}\n{{\n    {} g_{};\n}};\n", g.name, TypeName(g.type), g.name);
                         shader.bindings.Push({Format("hx_block_{}", g.name), GlobalKind::Uniform, g.slot});
+                    }
+                    else if (g.kind == GlobalKind::Storage)
+                    {
+                        if (!modern)
+                            return Fail(Format("storage buffer {} needs GLSL 4.30 or GLSL ES 3.10", g.name));
+                        if (!CheckBufferLayout(m, g.element, g.name, error))
+                            return false;
+                        FormatAppend(out, "layout(std430, binding = {}) {}buffer hx_buffer_{}\n{{\n    {} g_{}[];\n}};\n", g.slot,
+                                     g.writable ? "" : "readonly ", g.name, TypeName(g.element), g.name);
                     }
                     else if (g.kind == GlobalKind::Texture)
                     {

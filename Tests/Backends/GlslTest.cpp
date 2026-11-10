@@ -112,10 +112,51 @@ HX_TEST(Glsl, ReportsUnsupportedCode)
     HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(basics, "Wide"), Stage::Fragment, module, error));
     HX_CHECK(StringView(error).StartsWith("Wide: "));
     std::printf("    %s\n", error.CStr());
-    // A storage buffer is not supported by this backend yet; the message names what to do.
+    // A compute shader does not fit the GLSL versions that have none.
     u32 forward = a.FindNestedType(a.FindType("Helix.ShaderTests", "Lit"), "Forward");
-    HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(forward, "Count"), Stage::Fragment, module, error));
+    GlslShader shader;
+    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(forward, "Count"), Stage::Compute, module, error));
+    HX_CHECK(!EmitGlsl(module, GlslTarget::Glsl330, shader, error) && StringView(error).Contains("4.30"));
     std::printf("    %s\n", error.CStr());
+    HX_CHECK(!EmitGlsl(module, GlslTarget::Essl300, shader, error));
+    // The same method is not a fragment shader: it has no outputs to return.
+    HX_CHECK(TranslateEntryPoint(a, a.FindMethod(forward, "Count"), Stage::Fragment, module, error) &&
+             !EmitGlsl(module, GlslTarget::Glsl450, shader, error));
+    std::printf("    %s\n", error.CStr());
+}
+
+HX_TEST(Glsl, EmitsComputeShadersWithStorageBuffers)
+{
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    u32 forward = a.FindNestedType(a.FindType("Helix.ShaderTests", "Lit"), "Forward");
+    Module module;
+    GlslShader desktop, mobile;
+    String error;
+    bool ok = TranslateEntryPoint(a, a.FindMethod(forward, "Count"), Stage::Compute, module, error) &&
+              EmitGlsl(module, GlslTarget::Glsl430, desktop, error) && EmitGlsl(module, GlslTarget::Essl310, mobile, error);
+    if (!ok)
+        std::printf("    %s\n", error.CStr());
+    HX_REQUIRE(ok);
+    HX_CHECK(module.groupSize[0] == 8 && module.groupSize[1] == 4 && module.groupSize[2] == 1);
+    HX_REQUIRE(module.globals.Size() == 1u);
+    HX_CHECK(module.globals[0].kind == GlobalKind::Storage && module.globals[0].writable && module.globals[0].element == kUInt &&
+             module.globals[0].slot == 3);
+    StringView d = desktop.source, e = mobile.source;
+    HX_CHECK(d.StartsWith("#version 430 core\n") && e.StartsWith("#version 310 es\n"));
+    HX_CHECK(d.Contains("layout(std430, binding = 3) buffer hx_buffer_counters") && d.Contains("uint g_counters[];"));
+    HX_CHECK(d.Contains("layout(local_size_x = 8, local_size_y = 4, local_size_z = 1) in;") && d.Contains("uvec3(gl_GlobalInvocationID)"));
+    HX_CHECK(d.Contains("g_counters[") && e.Contains("g_counters["));
+
+    // Elements must lie the same way in C#, in std430 and packed.
+    u32 rejected = a.FindType("Helix.ShaderTests", "Rejected");
+    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(rejected, "PaddedElements"), Stage::Compute, module, error));
+    HX_CHECK(!EmitGlsl(module, GlslTarget::Glsl430, desktop, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("points") && StringView(error).Contains("three component"));
+    HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(rejected, "CopiesBuffer"), Stage::Compute, module, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("directly"));
 }
 
 HX_TEST(Glsl, RejectsWhatTheGpuCannotRun)

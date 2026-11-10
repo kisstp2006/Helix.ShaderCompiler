@@ -15,6 +15,8 @@ namespace helix::shadercompiler
         Struct,
         Texture2D,
         Sampler,
+        // A storage buffer: an array of elements, indexed with the Index expression. The element type is in its Global.
+        Buffer,
     };
 
     // Scalars are 1x1, vectors rows x 1, matrices rows x cols (square, column major).
@@ -85,7 +87,7 @@ namespace helix::shadercompiler
     X(Distance, "distance") X(Normalize, "normalize") X(Reflect, "reflect") X(Refract, "refract") X(Ddx, "ddx") X(Ddy, "ddy")  \
     X(Fwidth, "fwidth") X(Select, "select") X(Any, "any") X(All, "all") X(Mul, "mul") X(Transpose, "transpose")               \
     X(TextureSample, "texture.sample") X(TextureSampleLevel, "texture.samplelevel") X(TextureLoad, "texture.load")             \
-    X(TextureSize, "texture.size")
+    X(TextureSize, "texture.size") X(BufferLength, "buffer.length")
 
     enum class Intrinsic : u8
     {
@@ -213,6 +215,7 @@ namespace helix::shadercompiler
         Uniform,
         Texture,
         Sampler,
+        Storage,
     };
 
     struct Global
@@ -221,12 +224,16 @@ namespace helix::shadercompiler
         Type type;
         GlobalKind kind = GlobalKind::Uniform;
         u32 slot = 0;
+        // Storage buffers: the type of one element and whether the shader may write it.
+        Type element;
+        bool writable = false;
     };
 
     enum class Stage : u8
     {
         Vertex,
         Fragment,
+        Compute,
     };
 
     // One compiled entry point with everything it reaches.
@@ -249,6 +256,8 @@ namespace helix::shadercompiler
         // Role of the entry point's return value when it is not a struct.
         Semantic returnSemantic = Semantic::None;
         u32 returnSemanticIndex = 0;
+        // Compute: invocations per work group in x, y and z.
+        u32 groupSize[3] = {1, 1, 1};
         // Keywords that decide this code; a variant differs from another only when one of these differs.
         Array<KeywordUse> keywords;
     };

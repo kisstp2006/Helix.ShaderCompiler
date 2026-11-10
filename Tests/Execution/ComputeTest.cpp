@@ -1,0 +1,228 @@
+#include <Support/TestAssemblies.h>
+
+#include <Helix/Core/Strings/Format.h>
+#include <Helix/RHI/Device/Device.h>
+#include <Helix/ShaderCompiler/Backends/Dxbc.h>
+#include <Helix/ShaderCompiler/Backends/Glsl.h>
+#include <Helix/ShaderCompiler/Frontend/Frontend.h>
+#include <Helix/Testing/Test.h>
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+using namespace helix;
+using namespace helix::rhi;
+using namespace helix::shadercompiler;
+using namespace helix::shadercompiler::testing;
+
+namespace
+{
+    struct Reader
+    {
+        Span<const u8> data;
+        usize at = 0;
+
+        u32 U32()
+        {
+            u32 v = 0;
+            if (at + 4 <= data.Size())
+                std::memcpy(&v, data.Data() + at, 4);
+            at += 4;
+            return v;
+        }
+
+        const u8* Bytes(usize count)
+        {
+            const u8* p = at + count <= data.Size() ? data.Data() + at : nullptr;
+            at += count;
+            return p;
+        }
+    };
+
+    // Every kernel of Tests/Shaders/Kernels is compiled, dispatched on the device and its buffers are compared byte by
+    // byte with what the same C# code left on the CPU.
+    void RunKernels(Device& d, bool direct3d)
+    {
+        if (!d.Caps().compute || !d.Caps().storageBuffers)
+        {
+            std::printf("    %s: no compute shaders, skipped\n", d.Caps().renderer);
+            return;
+        }
+        Assembly a;
+        HX_REQUIRE(a.Load(TestShadersImage()));
+        Reader r{ShaderExpectations()};
+        r.U32();
+        r.U32();
+        r.at = r.U32();
+        u32 kernelCount = r.U32();
+        HX_REQUIRE(kernelCount >= 3);
+        u32 passed = 0;
+        for (u32 k = 0; k < kernelCount; k++)
+        {
+            u32 nameLength = 0;
+            if (const u8* p = r.Bytes(2))
+                nameLength = u32(p[0]) | (u32(p[1]) << 8);
+            const u8* nameBytes = r.Bytes(nameLength);
+            HX_REQUIRE(nameBytes != nullptr);
+            String name(StringView(reinterpret_cast<const char*>(nameBytes), nameLength));
+            u32 groups[3] = {r.U32(), r.U32(), r.U32()};
+
+            CommandList cl;
+            Array<TransientAllocation> uniforms;
+            Array<u32> uniformSlots;
+            u32 uniformCount = r.U32();
+            for (u32 u = 0; u < uniformCount; u++)
+            {
+                u32 slot = r.U32(), bytes = r.U32();
+                const u8* data = r.Bytes(bytes);
+                HX_REQUIRE(data != nullptr);
+                uniforms.Push(d.AllocateTransient(bytes));
+                uniformSlots.Push(slot);
+                std::memcpy(uniforms.Back().data, data, bytes);
+            }
+            struct Bound
+            {
+                BufferHandle buffer;
+                const u8* expected;
+                u32 size;
+                u32 slot;
+            };
+            Array<Bound> buffers;
+            u32 bufferCount = r.U32();
+            for (u32 b = 0; b < bufferCount; b++)
+            {
+                u32 slot = r.U32(), writable = r.U32(), stride = r.U32(), bytes = r.U32();
+                const u8* before = r.Bytes(bytes);
+                const u8* after = writable ? r.Bytes(bytes) : nullptr;
+                HX_REQUIRE(before != nullptr && (!writable || after != nullptr));
+                BufferHandle buffer = d.CreateBuffer({.size = bytes, .usage = BufferStorage, .structureStride = stride, .initialData = before});
+                HX_REQUIRE(buffer.IsValid());
+                buffers.Push({buffer, after, bytes, slot});
+            }
+
+            Module module;
+            GlslShader glsl;
+            DxbcShader dxbc;
+            String error;
+            u32 type = a.FindType("Helix.ShaderTests.Kernels", name);
+            HX_REQUIRE(type != 0);
+            bool ok = TranslateEntryPoint(a, a.FindMethod(type, "Run"), Stage::Compute, module, error) &&
+                      (direct3d ? EmitDxbc(module, dxbc, error) : EmitGlsl(module, GlslTarget::Glsl430, glsl, error));
+            if (!ok)
+                std::printf("    %s: %s\n", name.CStr(), error.CStr());
+            // HELIX_PRINT_SHADERS=<kernel name> shows the GLSL or writes the bytecode to <kernel name>.dxbc.
+            const char* print = std::getenv("HELIX_PRINT_SHADERS");
+            if (ok && print && name == StringView(print))
+            {
+                String path = helix::Format("{}.dxbc", name);
+                std::FILE* f = direct3d ? std::fopen(path.CStr(), "wb") : nullptr;
+                if (f)
+                {
+                    std::fwrite(dxbc.bytes.Data(), 1, dxbc.bytes.Size(), f);
+                    std::fclose(f);
+                }
+                if (!direct3d)
+                    std::printf("%s\n", glsl.source.CStr());
+            }
+            ShaderHandle shader;
+            PipelineHandle pipeline;
+            if (ok)
+            {
+                Array<ShaderBinding> bindings;
+                for (const GlslBinding& b : glsl.bindings)
+                    bindings.Push({b.name, b.kind == GlobalKind::Uniform ? BindingKind::UniformBuffer : BindingKind::Texture, b.slot});
+                ShaderDesc desc;
+                desc.stage = ShaderStage::Compute;
+                desc.source = glsl.source;
+                desc.bytecode = direct3d ? dxbc.bytes.Data() : nullptr;
+                desc.bytecodeSize = direct3d ? dxbc.bytes.Size() : 0;
+                desc.bindings = bindings.Data();
+                desc.bindingCount = u32(bindings.Size());
+                shader = d.CreateShader(desc);
+                pipeline = shader.IsValid() ? d.CreateComputePipeline({shader, "kernel"}) : PipelineHandle{};
+                ok = pipeline.IsValid();
+                if (!ok)
+                    std::printf("    %s: the generated shader was rejected by the driver:\n%s\n", name.CStr(), direct3d ? "" : glsl.source.CStr());
+            }
+            if (ok)
+            {
+                cl.SetPipeline(pipeline);
+                for (usize u = 0; u < uniforms.Size(); u++)
+                    cl.SetUniformBuffer(uniformSlots[u], uniforms[u]);
+                for (const Bound& b : buffers)
+                    cl.SetStorageBuffer(b.slot, b.buffer, b.expected ? StorageAccess::ReadWrite : StorageAccess::ReadOnly);
+                cl.Dispatch(groups[0], groups[1], groups[2]);
+                d.Submit(cl);
+                for (const Bound& b : buffers)
+                {
+                    if (!b.expected)
+                        continue;
+                    Array<u8> bytes;
+                    bytes.Resize(b.size);
+                    u32 wrong = 0, first = 0;
+                    if (d.ReadBuffer(b.buffer, 0, bytes.Data(), b.size))
+                    {
+                        for (u32 i = 0; i < b.size; i++)
+                            if (bytes[i] != b.expected[i] && !wrong++)
+                                first = i;
+                    }
+                    else
+                        wrong = 1;
+                    if (wrong)
+                    {
+                        std::printf("    %s (%s): buffer in slot %u has %u wrong bytes, the first at byte %u: GPU %u, CPU %u\n", name.CStr(),
+                                    direct3d ? "DXBC" : "GLSL 430", b.slot, wrong, first, u32(bytes[first]), u32(b.expected[first]));
+                        ok = false;
+                    }
+                }
+            }
+            d.Destroy(pipeline);
+            d.Destroy(shader);
+            for (const Bound& b : buffers)
+                d.Destroy(b.buffer);
+            HX_CHECK(ok);
+            passed += ok ? 1 : 0;
+        }
+        std::printf("    %u of %u kernels match the CPU on %s (%s)\n", passed, kernelCount, d.Caps().renderer, direct3d ? "Direct3D bytecode" : "GLSL 430");
+    }
+}
+
+HX_TEST(Compute, GlslMatchesTheCpu)
+{
+    Device* d = Device::IsBackendAvailable(Backend::OpenGL) ? Device::Create({.backend = Backend::OpenGL, .vsync = false}) : nullptr;
+    if (!d)
+    {
+        std::printf("    no OpenGL here, skipped\n");
+        return;
+    }
+    RunKernels(*d, false);
+    Device::Destroy(d);
+}
+
+HX_TEST(Compute, DxbcMatchesTheCpu)
+{
+    if (!Device::IsBackendAvailable(Backend::D3D11))
+    {
+        std::printf("    no Direct3D 11 here, skipped\n");
+        return;
+    }
+    char name[128];
+    u32 ran = 0;
+    for (u32 adapter = 0; Device::AdapterName(Backend::D3D11, adapter, name, sizeof(name)); adapter++)
+    {
+        Device* d = Device::Create({.backend = Backend::D3D11, .adapter = i32(adapter), .vsync = false});
+        if (!d)
+            continue;
+        RunKernels(*d, true);
+        Device::Destroy(d);
+        ran++;
+    }
+    if (!ran)
+    {
+        Device* d = Device::Create({.backend = Backend::D3D11, .vsync = false});
+        HX_REQUIRE(d != nullptr);
+        RunKernels(*d, true);
+        Device::Destroy(d);
+    }
+}

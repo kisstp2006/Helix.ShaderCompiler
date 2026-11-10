@@ -4,7 +4,7 @@ Shader compiler of the Helix engine. Shaders are written in C# with Helix.Shader
 library reads the resulting assembly and turns the shader methods into GPU code. It contains no third party code.
 
 Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50, GLSL ES 3.00 and Direct3D 11 bytecode
-(shader model 4.0).
+(shader model 4.0); compute shaders and storage buffers compile to GLSL 4.30, GLSL ES 3.10 and shader model 5.0 bytecode.
 
 ## Layout
 
@@ -64,6 +64,36 @@ range, default value or default texture, flags such as main texture or HDR, the 
 their render state and entry point methods. Declarations that cannot work are errors naming the shader and the member: a
 property type materials cannot hold, a pass without both entry points, a toggle naming a keyword the shader does not have,
 a name used twice.
+
+## Compute shaders and storage buffers
+
+```csharp
+public static class Integrate
+{
+    [Storage(1)] public static StructuredBuffer<Particle> source;
+    [Storage(2)] public static RWStructuredBuffer<Particle> moved;
+
+    [ComputeShader(64)]
+    public static void Run([DispatchThreadId] uint3 id)
+    {
+        Particle p = source[(int)id.x];
+        p.position.xy += p.velocity;
+        moved[(int)id.x] = p;
+    }
+}
+```
+
+`TranslateEntryPoint(..., Stage::Compute, ...)` reads the work group size from `[ComputeShader(x, y, z)]`. Buffers are
+`StructuredBuffer<T>` (read) and `RWStructuredBuffer<T>` (read and write) static fields with `[Storage(slot)]`, used with
+the indexer and `Length`; they work in vertex and fragment shaders too where the target has storage buffers. Elements
+are numbers, vectors, matrices or structs whose fields lie the same way in C#, in std430 and packed: no three component
+vectors or bools, no holes; the error names the field.
+
+| C# | GLSL 4.30 / ES 3.10 | Direct3D (shader model 5.0) |
+|---|---|---|
+| `[Storage(n)] RWStructuredBuffer<T> name` | `layout(std430, binding = n) buffer hx_buffer_name { T g_name[]; }` | structured buffer `u<n>` |
+| `[Storage(n)] StructuredBuffer<T> name` | the same, `readonly` | structured buffer `t<16 + n>` |
+| `[DispatchThreadId] uint3` | `gl_GlobalInvocationID` | `SV_DispatchThreadID` |
 
 ## Keywords and variants
 
@@ -137,7 +167,7 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
 - `double` is computed as `float`.
 
 Not available, each reported with the method name and the reason: classes and anything allocated, recursion, exceptions,
-`goto`, 64 bit integers, storage buffers and compute shaders (not implemented yet), calls into other libraries.
+`goto`, 64 bit integers, storage textures and atomic operations (not implemented yet), calls into other libraries.
 Dynamic keywords (decided at run time) are not available yet.
 
 ## Conventions of the generated GLSL
@@ -175,6 +205,9 @@ Not written yet for Direct3D: front facing input, depth output, writing a vector
   agree within 2/255. They run on the OpenGL device and on every Direct3D 11 adapter the machine offers.
 - Direct3D container: chunks, sizes, signatures and registers of both stages, and that output is deterministic.
 - GLSL ES 3.00 output is checked as text only; it is not executed yet.
+- Compute: three kernels (a uniform and a buffer, structs between two buffers on a 2D grid, an in place update with a
+  helper that loops and returns early on a 3D grid) run on the CPU and are dispatched as GLSL 4.30 and as Direct3D
+  bytecode on every adapter; the buffers must be the same byte by byte.
 - Keywords: a case with a bool and an enum keyword runs in all six combinations on the CPU and the GPU; the text tests
   check that the code, the helper function and the texture of other variants are gone.
 - Definitions: a shader using every declarative feature is read back field by field, a pass of it is compiled with
