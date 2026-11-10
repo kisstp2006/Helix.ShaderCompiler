@@ -31,6 +31,8 @@ namespace helix::shadercompiler
         u8 rows = 1;
         u8 cols = 1;
         u16 structIndex = 0;
+        // Float values that need only 16 bits of precision (half): computed as float, lower precision where it exists.
+        u8 half = 0;
 
         static constexpr Type Scalar(BaseType b) { return {b, 1, 1, 0}; }
         static constexpr Type Vector(BaseType b, u32 n) { return {b, u8(n), 1, 0}; }
@@ -44,7 +46,8 @@ namespace helix::shadercompiler
         constexpr bool IsVector() const { return IsNumeric() && rows > 1 && cols == 1; }
         constexpr bool IsMatrix() const { return cols > 1; }
         constexpr bool IsInteger() const { return base == BaseType::Int || base == BaseType::UInt; }
-        constexpr Type ScalarType() const { return Scalar(base); }
+        constexpr Type ScalarType() const { return {base, 1, 1, 0, half}; }
+        static constexpr Type Half(u32 n) { return {BaseType::Float, u8(n), 1, 0, 1}; }
         constexpr bool IsTexture() const
         {
             return base == BaseType::Texture2D || base == BaseType::Texture2DArray || base == BaseType::Texture3D || base == BaseType::TextureCube;

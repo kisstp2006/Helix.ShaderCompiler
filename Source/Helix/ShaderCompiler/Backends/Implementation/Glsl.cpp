@@ -27,6 +27,13 @@ namespace helix::shadercompiler
                 return false;
             }
 
+            // The type of a declaration: GLSL ES computes half values at medium precision.
+            String Decl(Type t) const
+            {
+                bool es = target == GlslTarget::Essl300 || target == GlslTarget::Essl310;
+                return es && t.half ? Format("mediump {}", TypeName(t)) : TypeName(t);
+            }
+
             String TypeName(Type t) const
             {
                 static constexpr const char* kScalar[] = {"void", "bool", "int", "uint", "float"};
@@ -524,16 +531,16 @@ namespace helix::shadercompiler
             void FunctionBody(const Function& f)
             {
                 fn = &f;
-                FormatAppend(out, "{} {}(", TypeName(f.returnType), f.name);
+                FormatAppend(out, "{} {}(", Decl(f.returnType), f.name);
                 for (usize i = 0; i < f.params.Size(); i++)
                 {
                     static constexpr const char* kModes[] = {"in", "out", "inout"};
-                    FormatAppend(out, "{}{} {} p_{}", i ? ", " : "", kModes[u32(f.params[i].mode)], TypeName(f.params[i].type), f.params[i].name);
+                    FormatAppend(out, "{}{} {} p_{}", i ? ", " : "", kModes[u32(f.params[i].mode)], Decl(f.params[i].type), f.params[i].name);
                 }
                 out.Append(")\n{\n");
                 indent = 1;
                 for (const Variable& v : f.locals)
-                    Line(Format("{} {};", TypeName(v.type), v.name));
+                    Line(Format("{} {};", Decl(v.type), v.name));
                 Statements(f.body);
                 indent = 0;
                 out.Append("}\n\n");
@@ -553,12 +560,12 @@ namespace helix::shadercompiler
                     if (vertex && input)
                     {
                         name = Format("hx_in{}", index);
-                        FormatAppend(out, "layout(location = {}) in {} {};\n", index, TypeName(type), name);
+                        FormatAppend(out, "layout(location = {}) in {} {};\n", index, Decl(type), name);
                     }
                     else if (vertex != input)
                     {
                         name = Format("hx_v{}", index);
-                        FormatAppend(out, "{}{} {} {};\n", qualifier, input ? "in" : "out", TypeName(type), name);
+                        FormatAppend(out, "{}{} {} {};\n", qualifier, input ? "in" : "out", Decl(type), name);
                     }
                     else
                         return Fail(Format("{}: a fragment shader writes targets, not locations", what));
@@ -576,7 +583,7 @@ namespace helix::shadercompiler
                     if (vertex || input)
                         return Fail(Format("{}: [Target] is a fragment output", what));
                     name = Format("hx_target{}", index);
-                    FormatAppend(out, "layout(location = {}) out {} {};\n", index, TypeName(type), name);
+                    FormatAppend(out, "layout(location = {}) out {} {};\n", index, Decl(type), name);
                     expression = name;
                     return true;
                 case Semantic::Depth:
@@ -618,7 +625,7 @@ namespace helix::shadercompiler
                     if (p.type.base == BaseType::Struct)
                     {
                         String local = Format("a{}", i);
-                        FormatAppend(body, "    {} {};\n", TypeName(p.type), local);
+                        FormatAppend(body, "    {} {};\n", Decl(p.type), local);
                         for (const StructField& f : m.structs[p.type.structIndex].fields)
                         {
                             if (!Interface(f.semantic, f.semanticIndex, f.type, f.flat, true, expression, Format("field {} of parameter {}", f.name, p.name)))
@@ -644,7 +651,7 @@ namespace helix::shadercompiler
                     FormatAppend(body, "    {};\n", call);
                 else if (r.base == BaseType::Struct)
                 {
-                    FormatAppend(body, "    {} r = {};\n", TypeName(r), call);
+                    FormatAppend(body, "    {} r = {};\n", Decl(r), call);
                     for (const StructField& f : m.structs[r.structIndex].fields)
                     {
                         if (!Interface(f.semantic, f.semanticIndex, f.type, f.flat, false, expression, Format("field {} of the return value", f.name)))
@@ -689,7 +696,7 @@ namespace helix::shadercompiler
                 {
                     FormatAppend(out, "struct {}\n{{\n", TypeName(Type::Struct(u32(i))));
                     for (const StructField& f : m.structs[i].fields)
-                        FormatAppend(out, "    {} m_{};\n", TypeName(f.type), f.name);
+                        FormatAppend(out, "    {} m_{};\n", Decl(f.type), f.name);
                     out.Append("};\n");
                 }
                 for (const Global& g : m.globals)

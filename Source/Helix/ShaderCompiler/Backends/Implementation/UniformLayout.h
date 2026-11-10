@@ -90,6 +90,11 @@ namespace helix::shadercompiler
             }
             return true;
         }
+        if (t.half)
+        {
+            error = Format("buffer element {} is half; buffers take float, since the GPU layout has no 16 bit floats", path);
+            return false;
+        }
         if (t.base == BaseType::Bool || t.rows == 3)
         {
             error = Format("buffer element {} is a {}; use {}", path, t.base == BaseType::Bool ? "bool" : "three component vector or 3x3 matrix",
@@ -107,6 +112,11 @@ namespace helix::shadercompiler
             if (f.type.base == BaseType::Bool)
             {
                 error = Format("uniform field {} is a bool; use an int or uint, bools have no fixed layout", name);
+                return false;
+            }
+            if (f.type.half)
+            {
+                error = Format("uniform field {} is half; uniform blocks take float, since the GPU layout has no 16 bit floats", name);
                 return false;
             }
             UniformLayout l = Std140(m, f.type);

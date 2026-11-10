@@ -266,7 +266,8 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
 
 ## What shader code may use
 
-- `float`, `int`, `uint`, `bool`, the vector and matrix types of Helix.Shaders, structs of those (also nested).
+- `float`, `int`, `uint`, `bool`, `half`, the vector and matrix types of Helix.Shaders, structs of those (also nested). `half`
+  values are floats with `mediump` declarations on GLSL ES; uniform blocks, buffers and vertex inputs reject them.
 - Static methods, generic methods, `ref`, `out` and `in` parameters, ref locals, methods of user structs.
 - Vector components and matrix columns by index (`v[i]`, `m[i]`), also written at computed positions.
 - `if`, `for`, `while`, `do`, `switch`, `break`, `continue`, early `return`, `?:`, `&&`, `||`.
@@ -322,6 +323,8 @@ cannot be indexed.
   helper that loops and returns early on a 3D grid, counters shared through atomic adds, a storage texture, bindless
   buffers, storage textures read and written in R32F, R32UI, R32I and written in RGBA16F) run on the CPU and are dispatched as GLSL 4.30 and as Direct3D
   bytecode on every adapter; the buffers must be the same byte by byte, texels within the last bit.
+- Half precision: locals, a helper with half parameters and a half4 target; GLSL ES declarations are `mediump`, other
+  targets are unchanged; half in a uniform block and in a vertex input is rejected.
 - Shadow maps: comparison sampling of a filtered 2D map, a layer of an array and a cube face, on D32 float textures.
 - Texture kinds: an eight layer array (sampled and loaded), a volume filtered in three dimensions, a cube read at texel centers
   of all six faces, and an integer array.

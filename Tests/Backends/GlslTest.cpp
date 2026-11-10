@@ -160,6 +160,20 @@ HX_TEST(Glsl, EmitsComputeShadersWithStorageBuffers)
     HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(rejected, "ReadsColors"), Stage::Compute, module, error));
     std::printf("    %s\n", error.CStr());
     HX_CHECK(StringView(error).Contains("R32F, R32UI or R32I"));
+    HX_CHECK(TranslateEntryPoint(a, a.FindMethod(rejected, "HalfUniform"), Stage::Fragment, module, error) &&
+             !EmitGlsl(module, GlslTarget::Glsl330, desktop, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("halfBlock.tint") && StringView(error).Contains("float"));
+    HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(rejected, "HalfInput"), Stage::Vertex, module, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("vertex input p is half"));
+
+    // Half values are medium precision on GLSL ES and plain floats elsewhere.
+    u32 halves = a.FindType("Helix.ShaderTests.Cases", "HalfMath");
+    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(halves, "Fragment"), Stage::Fragment, module, error) &&
+               EmitGlsl(module, GlslTarget::Glsl330, desktop, error) && EmitGlsl(module, GlslTarget::Essl300, mobile, error));
+    HX_CHECK(!StringView(desktop.source).Contains("mediump") && StringView(mobile.source).Contains("mediump vec3") &&
+             StringView(mobile.source).Contains("out mediump vec4 hx_target0"));
     HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(rejected, "WrongFormat"), Stage::Compute, module, error));
     std::printf("    %s\n", error.CStr());
     HX_CHECK(StringView(error).Contains("does not fit"));

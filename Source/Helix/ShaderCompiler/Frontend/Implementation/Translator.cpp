@@ -28,6 +28,16 @@ namespace helix::shadercompiler
                 StringView prefix;
                 BaseType base;
             } kBases[] = {{"float", BaseType::Float}, {"int", BaseType::Int}, {"uint", BaseType::UInt}, {"bool", BaseType::Bool}};
+            if (name.StartsWith("half"))
+            {
+                StringView rest = name.Substr(4);
+                if (rest.Empty() || (rest.Size() == 1 && rest[0] >= '2' && rest[0] <= '4'))
+                {
+                    out = Type::Half(rest.Empty() ? 1u : u32(rest[0] - '0'));
+                    return true;
+                }
+                return false;
+            }
             // A bindless resource is the index it was registered under.
             if (name == "BindlessTexture" || name == "BindlessBuffer")
             {
@@ -1609,6 +1619,23 @@ namespace helix::shadercompiler
                 bool flat;
                 out.returnSemantic = t.ReadSemantic(Token(Table::Param, p), out.returnSemanticIndex, flat);
             }
+        // Vertex buffers hold no 16 bit floats the shader could read as they lie in C#.
+        if (stage == Stage::Vertex)
+        {
+            const Function& entry = out.functions[out.entry];
+            for (const Variable& p : entry.params)
+            {
+                bool half = p.semantic == Semantic::Location && p.type.half;
+                if (p.type.base == BaseType::Struct)
+                    for (const StructField& f : out.structs[p.type.structIndex].fields)
+                        half = half || (f.semantic == Semantic::Location && f.type.half);
+                if (half)
+                {
+                    error = Format("{}: vertex input {} is half; vertex inputs take float", info.name, p.name);
+                    return false;
+                }
+            }
+        }
         if (stage == Stage::Compute)
         {
             Array<AttributeArgument> size;

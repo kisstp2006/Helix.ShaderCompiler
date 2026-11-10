@@ -89,6 +89,8 @@ internal static class Program
     {
         if (result is float4 color)
             return color;
+        if (result is half4 lower)
+            return (float4)lower;
         FieldInfo[] fields = result.GetType().GetFields();
         float4 target = (float4)fields.First(f => f.GetCustomAttribute<TargetAttribute>() != null).GetValue(result)!;
         FieldInfo? depth = fields.FirstOrDefault(f => f.GetCustomAttribute<DepthAttribute>() != null);

@@ -47,6 +47,21 @@ public static class Rejected
     [ComputeShader(1)]
     public static void WrongFormat([DispatchThreadId] uint3 id) => mismatched[new int2(0, 0)] = 1u;
 
+    public struct HalfBlock
+    {
+        public half4 tint;
+    }
+
+    [Uniform(5)] public static HalfBlock halfBlock;
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 HalfUniform() => (float4)halfBlock.tint;
+
+    [VertexShader]
+    [return: Position]
+    public static float4 HalfInput([Location(0)] half2 p) => new float4((float2)p, 0.0f, 1.0f);
+
     [FragmentShader]
     public static float4 NoTarget([Location(0)] float2 uv) => new float4(uv, 0.0f, 1.0f);
 }

@@ -772,3 +772,21 @@ public static class ShadowMaps
         return new float4(a, b, c, 1.0f);
     }
 }
+
+/// <summary>Half precision locals, parameters and output.</summary>
+public static class HalfMath
+{
+    private static half3 Tint(half3 c, half k) => c * k + new half3((half)0.125f);
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static half4 Fragment([Location(0)] float2 uv)
+    {
+        half2 h = (half2)uv;
+        half3 c = Tint(new half3(h.x, h.y, (half)0.5f), (half)0.75f);
+        half s = c.x * c.y + (half)0.25f;
+        if (s > (half)0.5f)
+            c.z = -c.z + (half)1.0f;
+        return new half4(c.zyx, s);
+    }
+}
