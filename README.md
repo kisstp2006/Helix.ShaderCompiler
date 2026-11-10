@@ -16,6 +16,7 @@ Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50, GLSL
 | `Source/Helix/ShaderCompiler/Definition/` | `ReadShaderDefinitions`: shaders, material properties, keywords, passes and render state declared in an assembly |
 | `Source/Helix/ShaderCompiler/Variants/` | `EnumerateVariants`: the keyword combinations a pass has to be compiled for |
 | `Source/Helix/ShaderCompiler/Cache/` | `CompileModule` and `ShaderCache`: one entry point for all targets, results kept by content in memory and on disk |
+| `Source/Helix/ShaderCompiler/Material/` | `BindProperties`: where each material property of a shader goes in one compiled pass, and the default block data |
 | `Source/Helix/ShaderCompiler/Reflection/` | `Reflect` and `LinkReflection`: uniform block layouts, resource slots, stage inputs and outputs of a compiled variant, and whether two stages fit |
 | `Source/Helix/ShaderCompiler/Transforms/` | `Simplify`: constant folding, constant locals, removal of code, functions and resources that cannot be reached |
 | `Source/Helix/ShaderCompiler/Backends/` | `EmitGlsl`: a module to GLSL source with its binding table; `EmitDxbc`: a module to a Direct3D bytecode container |
@@ -120,6 +121,31 @@ variant does not use are not listed. A texture is sampled with the sampler bound
 `LinkReflection` joins the two stages of a pass and fails with a message naming the value when they do not fit: the
 fragment stage reads a location the vertex stage does not write, or with another type or interpolation; a slot holds
 different blocks or resources in the two stages; the vertex stage writes no position; two vertex inputs share a location.
+
+## Material properties
+
+```csharp
+[Property("Tint"), Default(1.0f, 1.0f, 1.0f, 1.0f)] public float4 tint;
+[Property("Base Map")] public Texture2D baseMap;
+
+public struct Material { public float4 tint; public float4 baseMap_ST; }
+[Uniform(1)] public static Material material;
+[Texture(0)] public static Texture2D baseMap;     // in the pass class
+```
+
+```cpp
+MaterialLayout layout;
+BindProperties(shader, pass, layout, error);       // pass: the PassReflection of one variant
+Array<u8> data = layout.blocks[0].defaults;        // what a new material uploads to slot layout.blocks[0].slot
+WritePropertyValue(shader.properties[i], *layout.Find(i, PropertyTarget::Member), value, data);
+```
+
+A property reaches the code by its name: a number, vector or matrix property is the uniform block member of the same name,
+a texture property the texture of the same name, and its tiling the float4 member `<name>_ST` (scale in xy, offset in zw)
+unless the property is marked `[NoScaleOffset]`. `BindProperties` lists for every property where it goes (block and byte
+offset, or texture slot), builds the default data of each block that takes properties (zero, the `[Default]` values
+converted to the member type, tiling one and zero) and tells which blocks also hold members the renderer has to fill and
+which properties the pass does not use. A property whose member or texture has another type is an error naming both.
 
 ## Compute shaders and storage buffers
 
@@ -272,6 +298,8 @@ Not written yet for Direct3D: front facing input, depth output, writing a vector
 - Compute: five kernels (a uniform and a buffer, structs between two buffers on a 2D grid, an in place update with a
   helper that loops and returns early on a 3D grid, counters shared through atomic adds, a storage texture) run on the CPU and are dispatched as GLSL 4.30 and as Direct3D
   bytecode on every adapter; the buffers must be the same byte by byte, texels within the last bit.
+- Material: properties of every kind tied to members, tiling and texture slots with their default data, a block that mixes
+  properties with other members, a shader whose properties the pass does not use, and a type mismatch.
 - Reflection: block members with offsets (also std140 corner cases and nested structs), resources per variant, compute
   shaders, and three pairs of stages that do not fit.
 - Variants and cache: the variants of passes with plain and shader feature keywords, wrong values and the limit; six
