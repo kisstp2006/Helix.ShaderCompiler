@@ -22,6 +22,8 @@ HX_TEST(AssemblyResolver, FindsAddedAssembliesByName)
     HX_CHECK(resolver.Find("Helix.ShaderIncludes") == &includes);
     HX_CHECK(resolver.Find("Nothing.Like.This") == nullptr);
     HX_CHECK(resolver.References().Size() == 2);
+    // The include assembly embeds its PDB; the test shaders have theirs only on disk.
+    HX_CHECK(resolver.Symbols().Size() == 1 && resolver.Symbols()[0]->Matches(includes));
 }
 
 // Web and Android runs have no access to the build directory.
@@ -40,5 +42,12 @@ HX_TEST(AssemblyResolver, LoadsReferencesFromDirectories)
     HX_CHECK(library->FindType("HelixEngine.Shaders", "ShaderMath") != 0);
     HX_CHECK(includes->FindType("Helix.ShaderIncludes", "Lighting") != 0);
     HX_CHECK(resolver.References().Size() == 2);
+    bool testSymbols = false, includeSymbols = false;
+    for (const DebugInfo* d : resolver.Symbols())
+    {
+        testSymbols = testSymbols || d->Matches(tests);
+        includeSymbols = includeSymbols || d->Matches(*includes);
+    }
+    HX_CHECK(testSymbols && includeSymbols);
 }
 #endif

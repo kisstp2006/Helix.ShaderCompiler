@@ -6,12 +6,15 @@
 #include <ShaderIncludesAssembly.h>
 #include <ShaderLibraryAssembly.h>
 #include <TestShadersAssembly.h>
+#include <TestShadersSymbols.h>
 
 #include <Helix/Core/Basics/Span.h>
 
 namespace helix::shadercompiler::testing
 {
     inline Span<const u8> TestShadersImage() { return Span<const u8>(kTestShadersAssembly, sizeof(kTestShadersAssembly)); }
+    // The portable PDB written next to the test shaders (the include assembly embeds its own).
+    inline Span<const u8> TestShadersSymbols() { return Span<const u8>(kTestShadersSymbols, sizeof(kTestShadersSymbols)); }
     // Output of Tests/Oracle: what each case of Tests/Shaders/Cases produces on the CPU.
     inline Span<const u8> ShaderExpectations() { return Span<const u8>(kShaderExpectations, sizeof(kShaderExpectations)); }
     inline Span<const u8> ShaderLibraryImage() { return Span<const u8>(kShaderLibraryAssembly, sizeof(kShaderLibraryAssembly)); }

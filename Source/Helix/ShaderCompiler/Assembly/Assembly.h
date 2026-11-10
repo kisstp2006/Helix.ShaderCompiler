@@ -141,6 +141,10 @@ namespace helix::shadercompiler
         // Appends the custom attributes attached to a token (type, method, field, parameter, ...).
         void Attributes(Token parent, Array<CustomAttribute>& out) const;
 
+        // Data of the first entry of the PE debug directory with this type (2 CodeView, 17 embedded portable PDB);
+        // empty when there is none.
+        Span<const u8> DebugEntry(u32 type) const;
+
     private:
         struct TableLayout
         {
@@ -166,6 +170,7 @@ namespace helix::shadercompiler
 
         Span<const u8> image_;
         Array<Section> sections_;
+        u32 debugRva_ = 0, debugSize_ = 0;
         Span<const u8> strings_, blobs_, userStrings_, guids_;
         TableLayout tables_[usize(Table::Count)];
         String error_;

@@ -34,6 +34,7 @@ if(TARGET helix_shader_compiler_tests)
     set(tests_dll "${artifacts}/bin/Helix.ShaderTests/release/Helix.ShaderTests.dll")
     set(library_dll "${artifacts}/bin/Helix.ShaderTests/release/HelixEngine.Shaders.dll")
     set(includes_dll "${artifacts}/bin/Helix.ShaderTests/release/Helix.ShaderIncludes.dll")
+    set(tests_pdb "${artifacts}/bin/Helix.ShaderTests/release/Helix.ShaderTests.pdb")
     set(oracle_dll "${artifacts}/bin/Helix.ShaderOracle/release/Helix.ShaderOracle.dll")
     set(expectations "${artifacts}/ShaderExpectations.bin")
     file(GLOB_RECURSE shader_sources CONFIGURE_DEPENDS
@@ -43,7 +44,7 @@ if(TARGET helix_shader_compiler_tests)
         "${CMAKE_CURRENT_SOURCE_DIR}/External/Helix.Shaders/Source/*.cs")
     list(FILTER shader_sources EXCLUDE REGEX "/(bin|obj)/")
     add_custom_command(
-        OUTPUT "${tests_dll}" "${library_dll}" "${includes_dll}" "${oracle_dll}"
+        OUTPUT "${tests_dll}" "${tests_pdb}" "${library_dll}" "${includes_dll}" "${oracle_dll}"
         COMMAND "${HELIX_DOTNET}" build "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Oracle/Helix.ShaderOracle.csproj" -c Release
                 --artifacts-path "${artifacts}" --nologo -v quiet
         DEPENDS ${shader_sources}
@@ -54,7 +55,8 @@ if(TARGET helix_shader_compiler_tests)
         COMMAND "${HELIX_DOTNET}" "${oracle_dll}" "${expectations}"
         DEPENDS "${oracle_dll}" "${tests_dll}"
         COMMENT "Running the test shaders on the CPU")
-    set(embedded "${generated}/TestShadersAssembly.h" "${generated}/ShaderLibraryAssembly.h" "${generated}/ShaderIncludesAssembly.h"
+    set(embedded "${generated}/TestShadersAssembly.h" "${generated}/TestShadersSymbols.h" "${generated}/ShaderLibraryAssembly.h"
+                 "${generated}/ShaderIncludesAssembly.h"
                  "${generated}/ShaderExpectations.h")
     add_custom_command(
         OUTPUT ${embedded}
@@ -63,11 +65,13 @@ if(TARGET helix_shader_compiler_tests)
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/Tools/EmbedFile.cmake"
         COMMAND "${CMAKE_COMMAND}" "-DINPUT=${library_dll}" "-DOUTPUT=${generated}/ShaderLibraryAssembly.h" -DNAME=kShaderLibraryAssembly
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/Tools/EmbedFile.cmake"
+        COMMAND "${CMAKE_COMMAND}" "-DINPUT=${tests_pdb}" "-DOUTPUT=${generated}/TestShadersSymbols.h" -DNAME=kTestShadersSymbols
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/Tools/EmbedFile.cmake"
         COMMAND "${CMAKE_COMMAND}" "-DINPUT=${includes_dll}" "-DOUTPUT=${generated}/ShaderIncludesAssembly.h" -DNAME=kShaderIncludesAssembly
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/Tools/EmbedFile.cmake"
         COMMAND "${CMAKE_COMMAND}" "-DINPUT=${expectations}" "-DOUTPUT=${generated}/ShaderExpectations.h" -DNAME=kShaderExpectations
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/Tools/EmbedFile.cmake"
-        DEPENDS "${tests_dll}" "${library_dll}" "${includes_dll}" "${expectations}" "${CMAKE_CURRENT_SOURCE_DIR}/Tools/EmbedFile.cmake"
+        DEPENDS "${tests_dll}" "${tests_pdb}" "${library_dll}" "${includes_dll}" "${expectations}" "${CMAKE_CURRENT_SOURCE_DIR}/Tools/EmbedFile.cmake"
         COMMENT "Embedding the test assemblies and expectations")
     # Helix.RHI cannot build shaders for its own tests (it sits below this library): this target writes them as a header.
     if(NOT CMAKE_CROSSCOMPILING)

@@ -99,6 +99,32 @@ namespace helix::shadercompiler
                 for (const Assembly* r : o.references)
                     if (r && r != &assembly)
                         assemblies.Push(r);
+                for (const Assembly* x : assemblies)
+                {
+                    const DebugInfo* found = nullptr;
+                    for (const DebugInfo* d : o.symbols)
+                        if (!found && d && d->Matches(*x))
+                            found = d;
+                    symbols.Push(found);
+                }
+            }
+
+            // Debug information per assembly, and the instruction being translated, for the file and line of errors.
+            Array<const DebugInfo*> symbols;
+            struct Location
+            {
+                u32 assembly = 0, method = 0, offset = 0;
+            };
+            Location location;
+
+            // "file:line: " of an IL offset of a method of the current assembly; empty without debug information.
+            String At(u32 assembly, u32 method, u32 offset) const
+            {
+                String file;
+                u32 line = 0;
+                if (method == 0 || !symbols[assembly] || !symbols[assembly]->Find(method, offset, file, line))
+                    return String();
+                return Format("{}:{}: ", file, line);
             }
 
             // Rows are per assembly; types are told apart by both.
@@ -194,7 +220,7 @@ namespace helix::shadercompiler
             bool Fail(StringView method, StringView message)
             {
                 if (error.Empty())
-                    error = Format("{}: {}", method, message);
+                    error = Format("{}{}: {}", At(location.assembly, location.method, location.offset), method, message);
                 return false;
             }
 
@@ -1848,6 +1874,7 @@ namespace helix::shadercompiler
                 {
                     const Instruction in = mt.code[i];
                     u32 op = u32(in.opcode);
+                    location.offset = in.offset;
                     bool lastInBlock = i + 1 == last;
                     i32 next = i + 1 < mt.code.Size() ? target(mt.code[i + 1].offset) : -1;
 
@@ -2164,6 +2191,14 @@ namespace helix::shadercompiler
 
             bool TranslateMethod(u32 row, const Array<Type>& typeArgs, const Array<Binding>& bindings, Function& out)
             {
+                // Errors point into this method until it is done, then into the caller again.
+                struct Restore
+                {
+                    Location& location;
+                    Location saved;
+                    ~Restore() { location = saved; }
+                } restore{location, location};
+                location = {current, row, 0};
                 Method mt;
                 MethodInfo info = a->Method(row);
                 mt.name = info.name;
@@ -2391,7 +2426,7 @@ namespace helix::shadercompiler
         if (index < 0)
         {
             if (error.Empty())
-                error = "translation failed";
+                error = Format("{}translation failed", t.At(0, method, 0));
             return false;
         }
         out.entry = u32(index);
@@ -2415,7 +2450,7 @@ namespace helix::shadercompiler
                         half = half || (f.semantic == Semantic::Location && f.type.half);
                 if (half)
                 {
-                    error = Format("{}: vertex input {} is half; vertex inputs take float", info.name, p.name);
+                    error = Format("{}{}: vertex input {} is half; vertex inputs take float", t.At(0, method, 0), info.name, p.name);
                     return false;
                 }
             }
@@ -2425,14 +2460,14 @@ namespace helix::shadercompiler
             Array<AttributeArgument> size;
             if (!t.Has(Token(Table::MethodDef, method), "ComputeShaderAttribute", &size) || size.Size() != 3)
             {
-                error = Format("{}: a compute shader needs [ComputeShader(x, y, z)]", info.name);
+                error = Format("{}{}: a compute shader needs [ComputeShader(x, y, z)]", t.At(0, method, 0), info.name);
                 return false;
             }
             for (usize i = 0; i < 3; i++)
                 out.groupSize[i] = u32(size[i].integer);
             if (!out.functions[out.entry].returnType.IsVoid())
             {
-                error = Format("{}: a compute shader returns nothing; it writes buffers", info.name);
+                error = Format("{}{}: a compute shader returns nothing; it writes buffers", t.At(0, method, 0), info.name);
                 return false;
             }
         }

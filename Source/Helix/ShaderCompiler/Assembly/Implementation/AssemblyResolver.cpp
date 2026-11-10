@@ -33,6 +33,28 @@ namespace helix::shadercompiler
     {
         for (Loaded* l : owned_)
             delete l;
+        for (LoadedSymbols* s : ownedSymbols_)
+            delete s;
+    }
+
+    void AssemblyResolver::LoadSymbols(const Assembly& assembly)
+    {
+        for (const Assembly* a : withSymbols_)
+            if (a == &assembly)
+                return;
+        withSymbols_.Push(&assembly);
+        LoadedSymbols* s = new LoadedSymbols();
+        bool found = s->info.LoadEmbedded(assembly) && s->info.Matches(assembly);
+        for (usize i = 0; !found && i < directories_.Size(); i++)
+            found = ReadFile(Format("{}/{}.pdb", directories_[i], assembly.Name()), s->image) &&
+                    s->info.Load(Span<const u8>(s->image.Data(), s->image.Size())) && s->info.Matches(assembly);
+        if (!found)
+        {
+            delete s;
+            return;
+        }
+        ownedSymbols_.Push(s);
+        symbols_.Push(&s->info);
     }
 
     void AssemblyResolver::AddDirectory(StringView directory) { directories_.Push(String(directory)); }
@@ -74,17 +96,22 @@ namespace helix::shadercompiler
         {
             const Assembly* a = work.Back();
             work.Pop();
+            LoadSymbols(*a);
             // Column 6 of AssemblyRef is the name.
             for (u32 row = 1; row <= a->RowCount(Table::AssemblyRef); row++)
             {
                 StringView name = a->GetString(a->Cell(Table::AssemblyRef, row, 6));
                 if (IsRuntime(name))
                     continue;
-                bool known = false;
+                const Assembly* known = nullptr;
                 for (const Assembly* k : all_)
-                    known = known || k->Name() == name;
+                    if (!known && k->Name() == name)
+                        known = k;
                 if (known)
+                {
+                    LoadSymbols(*known);
                     continue;
+                }
                 if (const Assembly* found = Find(name))
                     work.Push(found);
                 else if (missing.Empty())

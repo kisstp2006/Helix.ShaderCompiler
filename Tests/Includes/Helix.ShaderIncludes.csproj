@@ -9,7 +9,7 @@
     <RootNamespace>Helix.ShaderIncludes</RootNamespace>
     <AssemblyName>Helix.ShaderIncludes</AssemblyName>
     <Deterministic>true</Deterministic>
-    <DebugType>portable</DebugType>
+    <DebugType>embedded</DebugType>
     <Optimize>true</Optimize>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
   </PropertyGroup>

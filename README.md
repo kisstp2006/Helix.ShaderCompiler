@@ -10,7 +10,7 @@ Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50, GLSL
 
 | Path | Content |
 |---|---|
-| `Source/Helix/ShaderCompiler/Assembly/` | `Assembly` (PE file, CLI metadata, method bodies, custom attributes), signatures, IL instruction decoder |
+| `Source/Helix/ShaderCompiler/Assembly/` | `Assembly` (PE file, CLI metadata, method bodies, custom attributes), signatures, IL instruction decoder, `AssemblyResolver` (references by name), `DebugInfo` (portable PDB, also embedded) |
 | `Source/Helix/ShaderCompiler/IR/` | The module a shader is translated to: types, structs, expressions, structured statements, functions, resources |
 | `Source/Helix/ShaderCompiler/Frontend/` | `TranslateEntryPoint`: IL of an entry point and everything it calls to a module |
 | `Source/Helix/ShaderCompiler/Definition/` | `ReadShaderDefinitions`: shaders, material properties, keywords, passes and render state declared in an assembly |
@@ -47,6 +47,21 @@ if (!TranslateEntryPoint(assembly, assembly.FindMethod(type, "Fragment"), Stage:
 DxbcShader code;
 EmitDxbc(module, code, error);
 // code.bytes goes to ID3D11Device::CreatePixelShader as it is.
+```
+
+The shader library, included assemblies and their debug information come from an `AssemblyResolver`; with debug
+information every frontend error starts with the file and line of the C# source:
+
+```cpp
+AssemblyResolver resolver;
+resolver.AddDirectory("Build/Shaders");          // HelixEngine.Shaders.dll, includes, name.pdb files
+String missing;
+resolver.LoadReferences(assembly, missing);       // also finds the PDB of `assembly`
+TranslateOptions options;
+options.references = resolver.References();
+options.symbols = resolver.Symbols();
+TranslateEntryPoint(assembly, method, Stage::Fragment, module, error, options);
+// error: "Shaders/Unlit.cs:17: Fragment: a delegate depends on a condition; ..."
 ```
 
 ## Shader definitions
@@ -296,8 +311,8 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
   references.
 - `double` is computed as `float`.
 
-Not available, each reported with the method name and the reason: classes and anything allocated, recursion, exceptions,
-`goto`, 64 bit integers, calls into other libraries.
+Not available, each reported with the file and line (when debug information is given), the method name and the
+reason: classes and anything allocated, recursion, exceptions, `goto`, 64 bit integers, calls into the .NET libraries.
 Dynamic keywords (decided at run time) are not available yet.
 
 ## Conventions of the generated GLSL
@@ -346,6 +361,8 @@ cannot be indexed.
   targets are unchanged; half in a uniform block and in a vertex input is rejected.
 - Local functions: a static one, ones that capture a parameter and locals (changed after the capture), one that
   counts its calls in a captured local, and a nested one with a ref parameter.
+- Debug information: lines from the PDB next to the test shaders and from the one embedded in Tests/Includes, damaged
+  PDBs, and errors that name the line of the C# source, also inside a called method.
 - Includes: structs, an enum, a readonly property and functions of Tests/Includes, a uniform struct of it, and a
   capturing lambda passed into one of its functions; resources declared there are bound by slot; without the
   assembly the error names TranslateOptions::references. The resolver finds the references in memory and on disk.

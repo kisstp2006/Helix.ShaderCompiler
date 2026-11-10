@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Helix/ShaderCompiler/Assembly/Assembly.h>
+#include <Helix/ShaderCompiler/Assembly/DebugInfo.h>
 #include <Helix/ShaderCompiler/IR/IR.h>
 
 namespace helix::shadercompiler
@@ -20,6 +21,9 @@ namespace helix::shadercompiler
         // Assemblies the shader assembly references, matched by their names. With HelixEngine.Shaders among them the
         // methods of the library without an intrinsic (float4x4.Translation, ...) compile from their C# bodies.
         Span<const Assembly* const> references;
+        // Debug information of the shader assembly and of the references, matched to them by their PDB id. Errors then
+        // start with the file and line of the C# source: "Shaders/Lit.cs:42: Fragment: ...".
+        Span<const DebugInfo* const> symbols;
     };
 
     // Translates a shader entry point (a static C# method) and every method it calls into a module.

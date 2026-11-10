@@ -159,6 +159,8 @@ namespace helix::shadercompiler
         if (directoryCount < 15)
             return Fail("no CLI header");
         u32 cliRva = file.U32(directories + 14 * 8);
+        debugRva_ = file.U32(directories + 6 * 8);
+        debugSize_ = file.U32(directories + 6 * 8 + 4);
         usize sectionTable = optional + optionalSize;
         if (sectionCount > 96 || !file.Has(sectionTable, usize(sectionCount) * 40))
             return Fail("damaged section table");
@@ -209,6 +211,17 @@ namespace helix::shadercompiler
         if (tableStream.Empty())
             return Fail("no metadata tables");
         return ReadTables(tableStream);
+    }
+
+    Span<const u8> Assembly::DebugEntry(u32 type) const
+    {
+        View file{image_};
+        usize at = debugRva_ ? OffsetOfRva(debugRva_) : ~usize(0);
+        // Entries of 28 bytes: type at 12, size at 16, file offset of the data at 24.
+        for (u32 i = 0; i + 28 <= debugSize_ && file.Has(at + i, 28); i += 28)
+            if (file.U32(at + i + 12) == type)
+                return file.Sub(file.U32(at + i + 24), file.U32(at + i + 16));
+        return {};
     }
 
     bool Assembly::ReadTables(Span<const u8> stream)
