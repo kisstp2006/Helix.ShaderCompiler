@@ -64,6 +64,17 @@ if(TARGET helix_shader_compiler_tests)
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/Tools/EmbedFile.cmake"
         DEPENDS "${tests_dll}" "${library_dll}" "${expectations}" "${CMAKE_CURRENT_SOURCE_DIR}/Tools/EmbedFile.cmake"
         COMMENT "Embedding the test assemblies and expectations")
+    # Helix.RHI cannot build shaders for its own tests (it sits below this library): this target writes them as a header.
+    if(NOT CMAKE_CROSSCOMPILING)
+        helix_add_executable(helix_export_shaders TOOL SOURCES Tools/ExportShaders/ExportShaders.cpp DEPS Helix::ShaderCompiler)
+        add_custom_command(
+            OUTPUT "${generated}/CompiledShaders.h"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${generated}"
+            COMMAND helix_export_shaders "${tests_dll}" Helix.ShaderTests.Rhi "${generated}/CompiledShaders.h"
+            DEPENDS helix_export_shaders "${tests_dll}"
+            COMMENT "Exporting the shaders of the Helix.RHI tests")
+        add_custom_target(export_rhi_shaders ALL DEPENDS "${generated}/CompiledShaders.h")
+    endif()
     foreach(suite helix_shader_compiler_tests helix_shader_compiler_tests_discrete_gpu)
         if(TARGET ${suite})
             target_sources(${suite} PRIVATE ${embedded})

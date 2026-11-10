@@ -18,6 +18,8 @@ Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50, GLSL
 | `Tests/Shaders/` | C# test shaders, built with the .NET SDK during the CMake build and embedded into the test program |
 | `Tests/Oracle/` | C# program that runs the test shaders on the CPU and writes the images the GPU must reproduce |
 | `Tests/Execution/` | Compiles every case, draws it through Helix.RHI and compares it with the CPU image |
+| `Tests/Shaders/Rhi/` | C# shaders of the Helix.RHI tests |
+| `Tools/ExportShaders/` | `helix_export_shaders`: compiles the shaders of a namespace to a C++ header (GLSL, GLSL ES, Direct3D bytecode, bindings) |
 | `Tools/EmbedFile.cmake` | Turns a binary file into a C++ byte array |
 
 ## Compiling a shader
@@ -157,6 +159,13 @@ Not written yet for Direct3D: front facing input, depth output, writing a vector
 
 `HELIX_PRINT_SHADERS=<case name>` prints the generated fragment shader of one execution case and writes its bytecode to
 `<case name>.dxbc` in the working directory.
+
+## Shaders of the Helix.RHI tests
+
+Helix.RHI sits below this library and cannot compile shaders in its own build, so its tests use shaders compiled here.
+The target `export_rhi_shaders` (part of the default build on desktop) writes `Generated/CompiledShaders.h` into the build
+directory from `Tests/Shaders/Rhi`. After changing those shaders, copy the file to `Tests/Support/CompiledShaders.h` of
+Helix.RHI and run its tests.
 
 ## Build
 
