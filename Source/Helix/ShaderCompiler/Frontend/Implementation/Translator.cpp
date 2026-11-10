@@ -33,6 +33,11 @@ namespace helix::shadercompiler
                 out = Type::Scalar(BaseType::Texture2D);
                 return true;
             }
+            if (name == "RWTexture2D")
+            {
+                out = Type::Scalar(BaseType::Image);
+                return true;
+            }
             if (name == "SamplerState")
             {
                 out = Type::Scalar(BaseType::Sampler);
@@ -566,9 +571,24 @@ namespace helix::shadercompiler
                     bool byRef = false;
                     if (!ParseFieldSignature(field.signature, sig) || !MapType(sig, &mt, g.type, byRef, mt.name))
                         return Fail(mt.name, Format("resource {} has a type that shaders cannot use", field.name));
-                    if ((k.kind == GlobalKind::Storage) != (g.type.base == BaseType::Buffer))
-                        return Fail(mt.name, Format("{}: [Storage] goes with StructuredBuffer and RWStructuredBuffer fields", field.name));
-                    if (k.kind == GlobalKind::Storage && (!IsBufferType(sig, &g.writable) || !MapType(sig.args[0], &mt, g.element, byRef, mt.name) ||
+                    bool image = g.type.base == BaseType::Image;
+                    if ((k.kind == GlobalKind::Storage) != (g.type.base == BaseType::Buffer || image))
+                        return Fail(mt.name, Format("{}: [Storage] goes with StructuredBuffer, RWStructuredBuffer and RWTexture2D fields", field.name));
+                    if (image)
+                    {
+                        g.writable = true;
+                        g.element = Type::Vector(BaseType::Float, 4);
+                        // The format is a named argument of the attribute.
+                        Array<CustomAttribute> attributes;
+                        a.Attributes(parent, attributes);
+                        Array<AttributeArgument> f, named;
+                        for (const CustomAttribute& c : attributes)
+                            if (c.typeNamespace == kLibrary && c.typeName == k.attribute && DecodeAttribute(a, c, f, named))
+                                for (const AttributeArgument& n : named)
+                                    if (n.name == "Format")
+                                        g.format = StorageFormat(n.integer);
+                    }
+                    else if (k.kind == GlobalKind::Storage && (!IsBufferType(sig, &g.writable) || !MapType(sig.args[0], &mt, g.element, byRef, mt.name) ||
                                                           !(g.element.IsNumeric() || g.element.base == BaseType::Struct)))
                         return Fail(mt.name, Format("buffer {} has an element type that shaders cannot use", field.name));
                     m.globals.Push(Move(g));
@@ -654,7 +674,34 @@ namespace helix::shadercompiler
                     e.intrinsic = FindIntrinsic(lower);
                     if (e.intrinsic == Intrinsic::Count)
                         return Fail(mt.name, Format("ShaderMath.{} is not known to the compiler", member));
+                    if (e.intrinsic == Intrinsic::InterlockedAdd)
+                    {
+                        const Expr& buffer = mt.fn.exprs[args[0].e];
+                        if (buffer.kind != ExprKind::Global || m.globals[buffer.index].kind != GlobalKind::Storage)
+                            return Fail(mt.name, "a buffer must be used directly from its static field");
+                        // It changes the buffer, so it runs exactly here and its result waits in a temporary.
+                        Flush(mt);
+                        Item previous{make(Move(e)), false};
+                        Spill(mt, previous);
+                        Push(mt, previous.e);
+                        return true;
+                    }
                     Push(mt, make(Move(e)));
+                    return true;
+                }
+                if (typeName == "RWTexture2D")
+                {
+                    const Expr& image = mt.fn.exprs[args[0].e];
+                    if (image.kind != ExprKind::Global || m.globals[image.index].type.base != BaseType::Image)
+                        return Fail(mt.name, "a storage texture must be used directly from its static field");
+                    if (member != "set_Item" || args.Size() != 3)
+                        return Fail(mt.name, Format("RWTexture2D.{} is not available in shaders; a storage texture can only be written", member));
+                    Expr e;
+                    e.kind = ExprKind::Index;
+                    e.a = args[0].e;
+                    e.b = Coerce(mt, args[1].e, Type::Vector(BaseType::Int, 2));
+                    e.type = Type::Vector(BaseType::Float, 4);
+                    Assign(mt, AddExpr(mt.fn, Move(e)), args[2].e);
                     return true;
                 }
                 if (typeName == "Texture2D")

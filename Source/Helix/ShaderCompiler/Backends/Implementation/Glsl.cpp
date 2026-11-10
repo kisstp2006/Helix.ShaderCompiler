@@ -218,6 +218,15 @@ namespace helix::shadercompiler
                     Value(e.args[0]);
                     out.Append(".length()");
                     return true;
+                case Intrinsic::InterlockedAdd:
+                    out.Append("atomicAdd(");
+                    Value(e.args[0]);
+                    out.Append('[');
+                    Value(e.args[1]);
+                    out.Append("], ");
+                    Value(e.args[2]);
+                    out.Append(')');
+                    return true;
                 default: return call(IntrinsicName(e.intrinsic));
                 }
             }
@@ -353,11 +362,26 @@ namespace helix::shadercompiler
                     switch (s.kind)
                     {
                     case StmtKind::Assign:
+                    {
+                        const Expr& place = fn->exprs[s.a];
+                        if (place.kind == ExprKind::Index && fn->exprs[place.a].type.base == BaseType::Image)
+                        {
+                            // A texel of a storage texture.
+                            out.Append("imageStore(");
+                            Value(place.a);
+                            out.Append(", ");
+                            Value(place.b);
+                            out.Append(", ");
+                            Value(s.b);
+                            out.Append(");\n");
+                            break;
+                        }
                         Value(s.a);
                         out.Append(" = ");
                         Value(s.b);
                         out.Append(";\n");
                         break;
+                    }
                     case StmtKind::Evaluate:
                         Value(s.a);
                         out.Append(";\n");
@@ -585,6 +609,12 @@ namespace helix::shadercompiler
                     {
                         if (!modern)
                             return Fail(Format("storage buffer {} needs GLSL 4.30 or GLSL ES 3.10", g.name));
+                        if (g.type.base == BaseType::Image)
+                        {
+                            static constexpr const char* kFormats[] = {"rgba8", "rgba16f", "rgba32f", "r32f"};
+                            FormatAppend(out, "layout({}, binding = {}) writeonly uniform highp image2D g_{};\n", kFormats[u32(g.format) & 3], g.slot, g.name);
+                            continue;
+                        }
                         if (!CheckBufferLayout(m, g.element, g.name, error))
                             return false;
                         FormatAppend(out, "layout(std430, binding = {}) {}buffer hx_buffer_{}\n{{\n    {} g_{}[];\n}};\n", g.slot,

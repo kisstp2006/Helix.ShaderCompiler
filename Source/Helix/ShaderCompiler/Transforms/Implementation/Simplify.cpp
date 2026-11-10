@@ -23,7 +23,8 @@ namespace helix::shadercompiler
             if (!id)
                 return false;
             const Expr& e = fn.exprs[id];
-            if (e.kind == ExprKind::Call)
+            // An atomic add changes a buffer like a call may.
+            if (e.kind == ExprKind::Call || (e.kind == ExprKind::Intrinsic && e.intrinsic == Intrinsic::InterlockedAdd))
                 return true;
             for (ExprId arg : e.args)
                 if (HasCall(fn, arg))

@@ -183,3 +183,51 @@ public static class Scene
         return image.Sample(imageSampler, input.uv) * input.color;
     }
 }
+
+/// <summary>Squares plus a uniform into a buffer.</summary>
+public static class Fill
+{
+    public struct Params
+    {
+        public uint k;
+    }
+
+    [Uniform(0)] public static Params parameters;
+    [Storage(0)] public static RWStructuredBuffer<uint> values;
+
+    [ComputeShader(64)]
+    public static void Compute([DispatchThreadId] uint3 id) => values[(int)id.x] = id.x * id.x + parameters.k;
+}
+
+/// <summary>A gradient into a storage texture.</summary>
+public static class Gradient
+{
+    [Storage(0)] public static RWTexture2D image;
+
+    [ComputeShader(8, 8)]
+    public static void Compute([DispatchThreadId] uint3 id) =>
+        image[new int2((int)id.x, (int)id.y)] = new float4(id.x / 15.0f, id.y / 15.0f, 0.0f, 1.0f);
+}
+
+/// <summary>Appends the two triangles of every visible quad and counts the vertices in the draw arguments.</summary>
+public static class Cull
+{
+    [Storage(0)] public static RWStructuredBuffer<float2> vertices;
+    [Storage(1)] public static StructuredBuffer<uint> visible;
+    [Storage(2)] public static RWStructuredBuffer<uint> arguments;
+
+    [ComputeShader(4)]
+    public static void Compute([DispatchThreadId] uint3 id)
+    {
+        if (visible[(int)id.x] == 0u)
+            return;
+        int first = (int)InterlockedAdd(arguments, 0, 6u);
+        float x0 = id.x * 0.5f - 1.0f, x1 = x0 + 0.5f;
+        vertices[first] = new float2(x0, -1.0f);
+        vertices[first + 1] = new float2(x1, -1.0f);
+        vertices[first + 2] = new float2(x0, 1.0f);
+        vertices[first + 3] = new float2(x1, -1.0f);
+        vertices[first + 4] = new float2(x1, 1.0f);
+        vertices[first + 5] = new float2(x0, 1.0f);
+    }
+}

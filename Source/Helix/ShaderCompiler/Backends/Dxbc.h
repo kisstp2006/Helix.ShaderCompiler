@@ -17,8 +17,9 @@ namespace helix::shadercompiler
     // TEXCOORD<location> register location + 1; fragment targets are SV_Target<index>.
     // All calls are inlined, since the bytecode has no functions.
     //
-    // Compute shaders, and shaders that read storage buffers, are shader model 5.0 (feature level 11.0). A writable
-    // buffer in slot n is the structured buffer u<n>, a read only one t<16 + n>; elements are read packed as C# lays
-    // them out. [DispatchThreadId] is SV_DispatchThreadID.
+    // Compute shaders, and shaders that use storage resources, are shader model 5.0 (feature level 11.0). A writable
+    // buffer in slot n is u<n>, a read only one t<16 + n>, both as raw (byte address) views, so any buffer can be bound,
+    // also one that is a vertex buffer or holds indirect arguments; elements are read packed as C# lays them out.
+    // A storage texture in slot n is the typed view u<n>. [DispatchThreadId] is SV_DispatchThreadID.
     bool EmitDxbc(const Module& module, DxbcShader& out, String& error);
 }

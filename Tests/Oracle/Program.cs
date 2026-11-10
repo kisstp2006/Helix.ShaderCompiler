@@ -19,7 +19,8 @@ namespace Helix.ShaderOracle;
 ///
 /// Kernel section, the compute tests of Helix.ShaderTests.Kernels: u32 kernelCount, then per kernel: u16 name length, name,
 /// 3 x u32 work group counts, u32 uniformCount { u32 slot, u32 byteCount, bytes }, u32 bufferCount { u32 slot, u32 writable,
-/// u32 stride, u32 byteCount, bytes before, bytes after (writable buffers only) }.
+/// u32 stride, u32 byteCount, bytes before, bytes after (writable buffers only) }, u32 storageTextureCount { u32 slot,
+/// u32 width, u32 height, RGBA8 pixels after }.
 /// </summary>
 internal static class Program
 {
@@ -97,7 +98,8 @@ internal static class Program
             FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.Static);
             WriteUniforms(w, fields);
 
-            FieldInfo[] buffers = fields.Where(f => f.GetCustomAttribute<StorageAttribute>() != null).ToArray();
+            FieldInfo[] buffers = fields.Where(f => f.GetCustomAttribute<StorageAttribute>() != null && f.FieldType.IsGenericType).ToArray();
+            FieldInfo[] images = fields.Where(f => f.FieldType == typeof(RWTexture2D)).ToArray();
             List<byte[]> before = buffers.Select(f => BufferBytes(f.GetValue(null)!).bytes).ToList();
             ComputeShaderAttribute size = run.GetCustomAttribute<ComputeShaderAttribute>()!;
             object[] arguments = new object[1];
@@ -120,6 +122,16 @@ internal static class Program
                 w.Write(before[i]);
                 if (writable)
                     w.Write(after);
+            }
+            w.Write((uint)images.Length);
+            foreach (FieldInfo f in images)
+            {
+                RWTexture2D image = (RWTexture2D)f.GetValue(null)!;
+                w.Write((uint)f.GetCustomAttribute<StorageAttribute>()!.Slot);
+                w.Write((uint)image.Size.x);
+                w.Write((uint)image.Size.y);
+                foreach (float4 pixel in image.Pixels!)
+                    WritePixel(w, pixel);
             }
         }
         return kernels.Count;

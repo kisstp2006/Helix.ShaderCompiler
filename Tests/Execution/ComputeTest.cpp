@@ -92,13 +92,32 @@ namespace
             u32 bufferCount = r.U32();
             for (u32 b = 0; b < bufferCount; b++)
             {
-                u32 slot = r.U32(), writable = r.U32(), stride = r.U32(), bytes = r.U32();
+                u32 slot = r.U32(), writable = r.U32();
+                r.U32(); // element size, not needed: the views are raw
+                u32 bytes = r.U32();
                 const u8* before = r.Bytes(bytes);
                 const u8* after = writable ? r.Bytes(bytes) : nullptr;
                 HX_REQUIRE(before != nullptr && (!writable || after != nullptr));
-                BufferHandle buffer = d.CreateBuffer({.size = bytes, .usage = BufferStorage, .structureStride = stride, .initialData = before});
+                BufferHandle buffer = d.CreateBuffer({.size = bytes, .usage = BufferStorage, .initialData = before});
                 HX_REQUIRE(buffer.IsValid());
                 buffers.Push({buffer, after, bytes, slot});
+            }
+            struct Image
+            {
+                TextureHandle texture;
+                const u8* expected;
+                u32 width, height, slot;
+            };
+            Array<Image> images;
+            u32 imageCount = r.U32();
+            for (u32 i = 0; i < imageCount; i++)
+            {
+                u32 slot = r.U32(), width = r.U32(), height = r.U32();
+                const u8* after = r.Bytes(usize(width) * height * 4);
+                HX_REQUIRE(after != nullptr);
+                TextureHandle texture = d.CreateTexture({.format = rhi::Format::RGBA8Unorm, .width = width, .height = height, .usage = TextureStorage | TextureSampled});
+                HX_REQUIRE(texture.IsValid());
+                images.Push({texture, after, width, height, slot});
             }
 
             Module module;
@@ -152,8 +171,35 @@ namespace
                     cl.SetUniformBuffer(uniformSlots[u], uniforms[u]);
                 for (const Bound& b : buffers)
                     cl.SetStorageBuffer(b.slot, b.buffer, b.expected ? StorageAccess::ReadWrite : StorageAccess::ReadOnly);
+                for (const Image& image : images)
+                    cl.SetStorageTexture(image.slot, image.texture);
                 cl.Dispatch(groups[0], groups[1], groups[2]);
                 d.Submit(cl);
+                for (const Image& image : images)
+                {
+                    Array<u8> pixels;
+                    pixels.Resize(usize(image.width) * image.height * 4);
+                    u32 wrong = 0, first = 0;
+                    if (d.ReadTexture(image.texture, 0, pixels.Data(), pixels.Size()))
+                    {
+                        // Texels are rounded to 8 bits on both sides; allow the last bit.
+                        for (usize i = 0; i < pixels.Size(); i++)
+                        {
+                            u32 diff = u32(pixels[i] > image.expected[i] ? pixels[i] - image.expected[i] : image.expected[i] - pixels[i]);
+                            if (diff > 1 && !wrong++)
+                                first = u32(i);
+                        }
+                    }
+                    else
+                        wrong = 1;
+                    if (wrong)
+                    {
+                        std::printf("    %s (%s): texture in slot %u has %u wrong channels, the first at texel (%u, %u) channel %u: GPU %u, CPU %u\n",
+                                    name.CStr(), direct3d ? "DXBC" : "GLSL 430", image.slot, wrong, first / 4 % image.width, first / 4 / image.width,
+                                    first % 4, u32(pixels[first]), u32(image.expected[first]));
+                        ok = false;
+                    }
+                }
                 for (const Bound& b : buffers)
                 {
                     if (!b.expected)
@@ -181,6 +227,8 @@ namespace
             d.Destroy(shader);
             for (const Bound& b : buffers)
                 d.Destroy(b.buffer);
+            for (const Image& image : images)
+                d.Destroy(image.texture);
             HX_CHECK(ok);
             passed += ok ? 1 : 0;
         }

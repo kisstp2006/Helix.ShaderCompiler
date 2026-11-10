@@ -1,5 +1,6 @@
-// Compiles every vertex and fragment shader of one namespace of a shader assembly and writes the results as a C++ header
-// for the Helix.RHI tests: GLSL 3.30, GLSL ES 3.00, Direct3D bytecode and the GLSL binding table of each shader.
+// Compiles every vertex, fragment and compute shader of one namespace of a shader assembly and writes the results as a C++ header
+// for the Helix.RHI tests: GLSL 3.30 and GLSL ES 3.00 (4.30 and 3.10 for compute shaders), Direct3D bytecode and the GLSL
+// binding table of each shader.
 //
 // usage: helix_export_shaders <assembly.dll> <namespace> <output.h>
 
@@ -81,15 +82,18 @@ int main(int argc, char** argv)
             continue;
         for (u32 method = type.methodBegin; method < type.methodEnd; method++)
         {
-            bool vertex = HasAttribute(a, method, "VertexShaderAttribute");
-            if (!vertex && !HasAttribute(a, method, "FragmentShaderAttribute"))
+            bool vertex = HasAttribute(a, method, "VertexShaderAttribute"), compute = HasAttribute(a, method, "ComputeShaderAttribute");
+            if (!vertex && !compute && !HasAttribute(a, method, "FragmentShaderAttribute"))
                 continue;
+            Stage stage = vertex ? Stage::Vertex : compute ? Stage::Compute : Stage::Fragment;
             Module module;
             GlslShader glsl, essl;
             DxbcShader dxbc;
             String error;
-            if (!TranslateEntryPoint(a, method, vertex ? Stage::Vertex : Stage::Fragment, module, error) ||
-                !EmitGlsl(module, GlslTarget::Glsl330, glsl, error) || !EmitGlsl(module, GlslTarget::Essl300, essl, error) ||
+            // Compute shaders exist from GLSL 4.30 and GLSL ES 3.10.
+            if (!TranslateEntryPoint(a, method, stage, module, error) ||
+                !EmitGlsl(module, compute ? GlslTarget::Glsl430 : GlslTarget::Glsl330, glsl, error) ||
+                !EmitGlsl(module, compute ? GlslTarget::Essl310 : GlslTarget::Essl300, essl, error) ||
                 !EmitDxbc(module, dxbc, error))
             {
                 std::fprintf(stderr, "%s.%s: %s\n", String(type.name).CStr(), String(a.Method(method).name).CStr(), error.CStr());
@@ -107,7 +111,7 @@ int main(int argc, char** argv)
                     FormatAppend(out, "{{\"{}\", BindingKind::{}, {}}}, ", b.name, b.kind == GlobalKind::Uniform ? "UniformBuffer" : "Texture", b.slot);
                 out.Append("};\n");
             }
-            FormatAppend(out, "    inline const CompiledShader {} = {{\n        ShaderStage::{},", name, vertex ? "Vertex" : "Fragment");
+            FormatAppend(out, "    inline const CompiledShader {} = {{\n        ShaderStage::{},", name, vertex ? "Vertex" : compute ? "Compute" : "Fragment");
             AppendLiteral(out, glsl.source);
             out.Append(",");
             AppendLiteral(out, essl.source);

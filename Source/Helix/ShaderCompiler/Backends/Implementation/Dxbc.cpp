@@ -21,7 +21,8 @@ namespace helix::shadercompiler
             kSincos = 77, kUdiv = 78, kUlt = 79, kUge = 80, kUmax = 83, kUmin = 84, kUshr = 85, kUtof = 86, kXor = 87,
             kDclResource = 88, kDclConstantBuffer = 89, kDclSampler = 90, kDclInput = 95, kDclInputSgv = 96, kDclInputPs = 98,
             kDclInputPsSiv = 100, kDclOutput = 101, kDclOutputSiv = 103, kDclTemps = 104,
-            kBufinfo = 121, kDclThreadGroup = 155, kDclUavStructured = 158, kDclResourceStructured = 162, kLdStructured = 167, kStoreStructured = 168,
+            kImad = 35, kBufinfo = 121, kDclThreadGroup = 155, kDclUavTyped = 156, kDclUavRaw = 157, kDclResourceRaw = 161, kStoreUavTyped = 164, kLdRaw = 165,
+            kStoreRaw = 166, kImmAtomicIadd = 180,
         };
         constexpr u32 kTestNonZero = 1u << 18;
         constexpr u32 kSaturate = 1u << 13;
@@ -450,12 +451,21 @@ namespace helix::shadercompiler
                 in.words.Push(g.writable ? g.slot : 16u + g.slot);
             }
 
-            // Structured buffer instructions carry the resource kind with the element size, and the return type.
-            void PutStructuredInfo(Instruction& in, u32 global)
+            // Raw buffer instructions carry the resource kind and the return type.
+            static void PutRawInfo(Instruction& in)
             {
                 in.words[0] |= 0x80000000u;
-                in.words.Push(0x80000002u | (12u << 6) | (SequentialSize(m, m.globals[global].element) << 11));
+                in.words.Push(0x80000002u | (11u << 6));
                 in.words.Push(0x00199983u);
+            }
+
+            // Byte address of `offset` bytes into element `index`.
+            Src Address(u32 global, const Src& index, u32 offset)
+            {
+                u32 stride = SequentialSize(m, m.globals[global].element);
+                if (index.kind == Src::Immediate)
+                    return ImmI(index.imm[index.Component(0)] * stride + offset);
+                return Emit(kImad, 1, index, ImmI(stride), ImmI(offset), false);
             }
 
             // Reads the value of a type that starts `offset` bytes into element `index`.
@@ -467,12 +477,12 @@ namespace helix::shadercompiler
                 Leaves(type, leaves);
                 for (const Type& leaf : leaves)
                 {
+                    Src address = Address(global, index, offset);
                     Src d = NewTemp(leaf.rows, IsFloat(leaf));
-                    Instruction in(kLdStructured);
-                    PutStructuredInfo(in, global);
+                    Instruction in(kLdRaw);
+                    PutRawInfo(in);
                     PutDst(in, Whole(d));
-                    PutScalar(in, index);
-                    PutScalar(in, ImmI(offset));
+                    PutScalar(in, address);
                     PutStorage(in, global, 0xE46u);
                     Finish(in);
                     v.parts.Push(d);
@@ -485,10 +495,10 @@ namespace helix::shadercompiler
             {
                 for (const Src& part : v.parts)
                 {
-                    Instruction in(kStoreStructured);
+                    Src address = Address(global, index, offset);
+                    Instruction in(kStoreRaw);
                     PutStorage(in, global, 0x2u | (((1u << part.count) - 1u) << 4));
-                    PutScalar(in, index);
-                    PutScalar(in, ImmI(offset));
+                    PutScalar(in, address);
                     PutSrc(in, part);
                     Finish(in);
                     offset += 4u * part.count;
@@ -510,7 +520,13 @@ namespace helix::shadercompiler
             bool IsStorage(const Instance& in, ExprId id) const
             {
                 const Expr& e = in.fn->exprs[id];
-                return e.kind == ExprKind::Global && m.globals[e.index].kind == GlobalKind::Storage;
+                return e.kind == ExprKind::Global && m.globals[e.index].type.base == BaseType::Buffer;
+            }
+
+            bool IsImage(const Instance& in, ExprId id) const
+            {
+                const Expr& e = in.fn->exprs[id];
+                return e.kind == ExprKind::Global && m.globals[e.index].type.base == BaseType::Image;
             }
 
             // 1 when the target is in a buffer, 0 when it is not, -1 on an error.
@@ -929,12 +945,35 @@ namespace helix::shadercompiler
                 }
                 case Intrinsic::BufferLength:
                 {
+                    // The view reports its size in bytes.
                     u32 global = arg(0).imm[0];
-                    Src d = NewTemp(1, false);
+                    Src bytes = NewTemp(1, false);
                     Instruction ins(kBufinfo);
-                    PutStructuredInfo(ins, global);
-                    PutDst(ins, Whole(d));
+                    PutRawInfo(ins);
+                    PutDst(ins, Whole(bytes));
                     PutStorage(ins, global, 0x006u);
+                    Finish(ins);
+                    Src d = NewTemp(1, false);
+                    Instruction divide(kUdiv);
+                    PutDst(divide, Whole(d));
+                    PutNull(divide);
+                    PutSrc(divide, bytes);
+                    PutSrc(divide, ImmI(SequentialSize(m, m.globals[global].element)));
+                    Finish(divide);
+                    return result(d);
+                }
+                case Intrinsic::InterlockedAdd:
+                {
+                    u32 global = arg(0).imm[0];
+                    if (!m.globals[global].writable || !m.globals[global].element.IsScalar() || !m.globals[global].element.IsInteger())
+                        return Fail(Format("InterlockedAdd needs a writable buffer of int or uint, {} is not", m.globals[global].name));
+                    Src address = Address(global, arg(1), 0);
+                    Src d = NewTemp(1, false);
+                    Instruction ins(kImmAtomicIadd);
+                    PutDst(ins, Whole(d));
+                    PutStorage(ins, global, 0);
+                    PutScalar(ins, address);
+                    PutScalar(ins, arg(2).kind == Src::Immediate ? arg(2) : Scalar(arg(2)));
                     Finish(ins);
                     return result(d);
                 }
@@ -1291,6 +1330,20 @@ namespace helix::shadercompiler
                     Array<Dst> places;
                     if (!Eval(in, s.b, value))
                         return false;
+                    const Expr& target = in.fn->exprs[s.a];
+                    if (target.kind == ExprKind::Index && IsImage(in, target.a))
+                    {
+                        // A texel of a storage texture.
+                        Value texel;
+                        if (!Eval(in, target.b, texel))
+                            return false;
+                        Instruction store(kStoreUavTyped);
+                        PutStorage(store, in.fn->exprs[target.a].index, 0xF2u);
+                        PutSrc(store, texel.parts[0]);
+                        PutSrc(store, value.parts[0]);
+                        Finish(store);
+                        return true;
+                    }
                     BufferTarget buffer;
                     if (int found = FindBufferTarget(in, s.a, buffer))
                     {
@@ -1560,7 +1613,7 @@ namespace helix::shadercompiler
                 {
                     if (g.kind == GlobalKind::Uniform && (g.type.base != BaseType::Struct || !CheckUniformLayout(m, g.type, g.name, 0, 0, error)))
                         return Fail(Format("uniform {} must be a struct", g.name));
-                    if (g.kind == GlobalKind::Storage && !CheckBufferLayout(m, g.element, g.name, error))
+                    if (g.kind == GlobalKind::Storage && g.type.base == BaseType::Buffer && !CheckBufferLayout(m, g.element, g.name, error))
                         return false;
                 }
                 for (const Function& f : m.functions)
@@ -1646,10 +1699,16 @@ namespace helix::shadercompiler
                 for (u32 global : storages)
                 {
                     const Global& g = m.globals[global];
-                    u32 stride = SequentialSize(m, g.element);
-                    u32 words[] = {(g.writable ? kDclUavStructured : kDclResourceStructured) | (4u << 24), g.writable ? 0x0011E000u : 0x00107000u,
-                                   g.writable ? g.slot : 16u + g.slot, stride};
-                    body.Append(words, 4);
+                    if (g.type.base == BaseType::Image)
+                    {
+                        // A two dimensional texture of floats; the format belongs to the view that gets bound.
+                        u32 words[] = {kDclUavTyped | (3u << 11) | (4u << 24), 0x0011E000u, g.slot, 0x00005555u};
+                        body.Append(words, 4);
+                        continue;
+                    }
+                    u32 words[] = {(g.writable ? kDclUavRaw : kDclResourceRaw) | (3u << 24), g.writable ? 0x0011E000u : 0x00107000u,
+                                   g.writable ? g.slot : 16u + g.slot};
+                    body.Append(words, 3);
                 }
                 body.Append(declarations.Data(), declarations.Size());
                 if (threadId)

@@ -17,6 +17,8 @@ namespace helix::shadercompiler
         Sampler,
         // A storage buffer: an array of elements, indexed with the Index expression. The element type is in its Global.
         Buffer,
+        // A storage texture a shader writes: a texel is the Index expression of the texture with an int2.
+        Image,
     };
 
     // Scalars are 1x1, vectors rows x 1, matrices rows x cols (square, column major).
@@ -87,7 +89,7 @@ namespace helix::shadercompiler
     X(Distance, "distance") X(Normalize, "normalize") X(Reflect, "reflect") X(Refract, "refract") X(Ddx, "ddx") X(Ddy, "ddy")  \
     X(Fwidth, "fwidth") X(Select, "select") X(Any, "any") X(All, "all") X(Mul, "mul") X(Transpose, "transpose")               \
     X(TextureSample, "texture.sample") X(TextureSampleLevel, "texture.samplelevel") X(TextureLoad, "texture.load")             \
-    X(TextureSize, "texture.size") X(BufferLength, "buffer.length")
+    X(TextureSize, "texture.size") X(BufferLength, "buffer.length") X(InterlockedAdd, "interlockedadd")
 
     enum class Intrinsic : u8
     {
@@ -210,6 +212,15 @@ namespace helix::shadercompiler
         Array<Stmt> body;
     };
 
+    // Values of the C# enum of the shader library.
+    enum class StorageFormat : u8
+    {
+        RGBA8,
+        RGBA16F,
+        RGBA32F,
+        R32F,
+    };
+
     enum class GlobalKind : u8
     {
         Uniform,
@@ -227,6 +238,8 @@ namespace helix::shadercompiler
         // Storage buffers: the type of one element and whether the shader may write it.
         Type element;
         bool writable = false;
+        // Storage textures: the texel format.
+        StorageFormat format = StorageFormat::RGBA8;
     };
 
     enum class Stage : u8

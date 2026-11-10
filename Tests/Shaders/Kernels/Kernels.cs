@@ -114,3 +114,54 @@ public static class InPlace
         cells[index] = cell;
     }
 }
+
+/// <summary>Counters shared by all threads: the sums do not depend on the order the threads run in.</summary>
+public static class Histogram
+{
+    public static readonly int3 Groups = new(4, 1, 1);
+
+    [Storage(0)] public static StructuredBuffer<uint> samples;
+    [Storage(1)] public static RWStructuredBuffer<uint> bins;
+    [Storage(2)] public static RWStructuredBuffer<int> balance;
+
+    public static void Setup()
+    {
+        uint[] items = new uint[64];
+        for (int i = 0; i < items.Length; i++)
+            items[i] = (uint)(i * i + 3 * i);
+        samples = StructuredBuffer<uint>.FromArray(items);
+        bins = RWStructuredBuffer<uint>.FromArray(new uint[8]);
+        balance = RWStructuredBuffer<int>.FromArray(new[] { 100, 0 });
+    }
+
+    [ComputeShader(16)]
+    public static void Run([DispatchThreadId] uint3 id)
+    {
+        uint sample = samples[(int)id.x];
+        InterlockedAdd(bins, (int)(sample & 3u), 1u);
+        // Every thread sees a different count before its own add; their sum is the same in any order.
+        uint before = InterlockedAdd(bins, 4, 1u);
+        InterlockedAdd(bins, 5, before);
+        if ((sample & 1u) == 0u)
+            InterlockedAdd(balance, 0, -(int)id.x);
+        else
+            InterlockedAdd(balance, 1, (int)sample);
+    }
+}
+
+/// <summary>Writes every texel of a storage texture.</summary>
+public static class Paint
+{
+    public static readonly int3 Groups = new(2, 2, 1);
+
+    [Storage(0, Format = StorageFormat.RGBA8)] public static RWTexture2D image;
+
+    public static void Setup() => image = RWTexture2D.Create(16, 16);
+
+    [ComputeShader(8, 8)]
+    public static void Run([DispatchThreadId] uint3 id)
+    {
+        float2 uv = new float2(id.x, id.y) / 15.0f;
+        image[new int2((int)id.x, (int)id.y)] = new float4(uv, ((id.x ^ id.y) & 1u) != 0u ? 1.0f : 0.25f, 1.0f);
+    }
+}
