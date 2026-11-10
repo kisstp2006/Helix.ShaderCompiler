@@ -111,6 +111,11 @@ namespace helix::shadercompiler
         u32 type = 0, vertex = 0, fragment = 0;
         // Index of its SubShader in ShaderDescription::subShaders.
         u32 subShader = 0;
+        // The assembly that holds the code (type, vertex, fragment); it differs from the shader's for a pass taken with
+        // UsePass from a shader of another assembly.
+        const Assembly* assembly = nullptr;
+        // "Shader/PASS" of a UsePass that ResolveUsePasses has not replaced yet; empty for a pass of its own.
+        String usePass;
     };
 
     // A group of passes; the renderer takes the first SubShader whose LOD is within its limit.
@@ -145,8 +150,16 @@ namespace helix::shadercompiler
     // declarations that cannot work: a property type materials cannot hold, a keyword that is neither bool nor enum,
     // a pass without a vertex or fragment shader, two passes of one SubShader or two properties with one name, passes
     // next to SubShader classes.
-    bool ReadShaderDefinitions(const Assembly& assembly, Array<ShaderDescription>& out, String& error);
+    //
+    // The shaders of the referenced assemblies are read too (they come after those of `assembly`), so UsePass finds their
+    // passes; every UsePass is resolved.
+    bool ReadShaderDefinitions(const Assembly& assembly, Array<ShaderDescription>& out, String& error, Span<const Assembly* const> references = {});
 
-    // The definition of one class (a TypeDef row with the Shader attribute).
+    // The definition of one class (a TypeDef row with the Shader attribute). Its UsePass entries stay unresolved.
     bool ReadShaderDefinition(const Assembly& assembly, u32 typeRow, ShaderDescription& out, String& error);
+
+    // Replaces every UsePass with a copy of the pass it names: the first SubShader of that shader with a pass of that name
+    // (without case, as pass names are upper case in UsePass paths). Fails naming the missing shader or pass, or the chain
+    // of UsePass that comes back to itself.
+    bool ResolveUsePasses(Array<ShaderDescription>& shaders, String& error);
 }

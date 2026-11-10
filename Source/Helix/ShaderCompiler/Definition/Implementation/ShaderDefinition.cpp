@@ -325,6 +325,7 @@ namespace helix::shadercompiler
                 ShaderPass pass;
                 pass.type = typeRow;
                 pass.subShader = subShader;
+                pass.assembly = &a;
                 pass.name = attribute.fixed.Empty() ? StringView() : attribute.fixed[0].text;
                 pass.lightMode = attribute.Text("LightMode");
                 Tags(attributes, pass.tags);
@@ -364,6 +365,24 @@ namespace helix::shadercompiler
                     Array<Attribute> onType = Attributes(a, Token(Table::TypeDef, nested));
                     if (const Attribute* pass = Find(onType, "PassAttribute"); pass && !Pass(shader, nested, onType, *pass, base, subShader))
                         return false;
+                    if (const Attribute* use = Find(onType, "UsePassAttribute"))
+                    {
+                        // A placeholder until ResolveUsePasses copies the pass in.
+                        StringView path = use->fixed.Empty() ? StringView() : use->fixed[0].text;
+                        usize slash = 0;
+                        for (usize i = 0; i < path.Size(); i++)
+                            if (path[i] == '/')
+                                slash = i;
+                        if (slash == 0 || slash + 1 >= path.Size())
+                            return Fail(shader, Format("UsePass {} must name a shader and a pass, \"Shader/PASS\"", path));
+                        ShaderPass pass;
+                        pass.type = nested;
+                        pass.subShader = subShader;
+                        pass.assembly = &a;
+                        pass.usePass = path;
+                        pass.name = path.Substr(slash + 1);
+                        shader.passes.Push(Move(pass));
+                    }
                 }
                 return true;
             }
@@ -397,7 +416,7 @@ namespace helix::shadercompiler
                     if (a.TypeDef(nested).enclosingType != typeRow)
                         continue;
                     Array<Attribute> onType = Attributes(a, Token(Table::TypeDef, nested));
-                    direct = direct || Find(onType, "PassAttribute") != nullptr;
+                    direct = direct || Find(onType, "PassAttribute") != nullptr || Find(onType, "UsePassAttribute") != nullptr;
                     const Attribute* sub = Find(onType, "SubShaderAttribute");
                     if (!sub)
                         continue;
@@ -429,6 +448,80 @@ namespace helix::shadercompiler
                 return true;
             }
         };
+    }
+
+    namespace
+    {
+        bool SameWithoutCase(StringView x, StringView y)
+        {
+            if (x.Size() != y.Size())
+                return false;
+            for (usize i = 0; i < x.Size(); i++)
+            {
+                char p = x[i] >= 'a' && x[i] <= 'z' ? char(x[i] - 32) : x[i];
+                char q = y[i] >= 'a' && y[i] <= 'z' ? char(y[i] - 32) : y[i];
+                if (p != q)
+                    return false;
+            }
+            return true;
+        }
+
+        // Resolves pass `p` of shader `s`; `chain` holds the UsePass paths being resolved, to find loops.
+        bool ResolvePass(Array<ShaderDescription>& shaders, usize s, usize p, Array<String>& chain, String& error)
+        {
+            ShaderPass& use = shaders[s].passes[p];
+            if (use.usePass.Empty())
+                return true;
+            for (const String& c : chain)
+                if (c == use.usePass)
+                {
+                    error = Format("shader {}: UsePass {} comes back to itself", shaders[s].name, use.usePass);
+                    return false;
+                }
+            StringView path = use.usePass;
+            usize slash = 0;
+            for (usize i = 0; i < path.Size(); i++)
+                if (path[i] == '/')
+                    slash = i;
+            StringView shaderName = path.Substr(0, slash), passName = path.Substr(slash + 1);
+            for (usize t = 0; t < shaders.Size(); t++)
+            {
+                if (shaders[t].name != shaderName)
+                    continue;
+                // The first SubShader that has the pass gives it.
+                for (u32 sub = 0; sub < shaders[t].subShaders.Size(); sub++)
+                    for (usize q = 0; q < shaders[t].passes.Size(); q++)
+                    {
+                        if (shaders[t].passes[q].subShader != sub || !SameWithoutCase(shaders[t].passes[q].name, passName))
+                            continue;
+                        chain.Push(String(path));
+                        bool ok = ResolvePass(shaders, t, q, chain, error);
+                        chain.Pop();
+                        if (!ok)
+                            return false;
+                        ShaderPass copy = shaders[t].passes[q];
+                        ShaderPass& target = shaders[s].passes[p];
+                        copy.subShader = target.subShader;
+                        target = Move(copy);
+                        return true;
+                    }
+                error = Format("shader {}: UsePass {}: shader {} has no pass {}", shaders[s].name, path, shaderName, passName);
+                return false;
+            }
+            error = Format("shader {}: UsePass {}: there is no shader {}", shaders[s].name, path, shaderName);
+            return false;
+        }
+    }
+
+    bool ResolveUsePasses(Array<ShaderDescription>& shaders, String& error)
+    {
+        error.Clear();
+        Array<String> chain;
+        for (usize s = 0; s < shaders.Size(); s++)
+            for (usize p = 0; p < shaders[s].passes.Size(); p++)
+                if (!ResolvePass(shaders, s, p, chain, error))
+                    return false;
+        return true;
     }
 
     const ShaderPass* ShaderDescription::FindPass(StringView passName) const
@@ -470,28 +563,36 @@ namespace helix::shadercompiler
         return reader.Shader(typeRow, attributes, *shader, out);
     }
 
-    bool ReadShaderDefinitions(const Assembly& assembly, Array<ShaderDescription>& out, String& error)
+    bool ReadShaderDefinitions(const Assembly& assembly, Array<ShaderDescription>& out, String& error, Span<const Assembly* const> references)
     {
         out.Clear();
         error.Clear();
-        Reader reader{assembly, error};
-        for (u32 row = 1; row <= assembly.RowCount(Table::TypeDef); row++)
+        Array<const Assembly*> all;
+        all.Push(&assembly);
+        for (const Assembly* r : references)
+            if (r && r != &assembly)
+                all.Push(r);
+        for (const Assembly* x : all)
         {
-            Array<Attribute> attributes = Attributes(assembly, Token(Table::TypeDef, row));
-            const Attribute* shader = Find(attributes, "ShaderAttribute");
-            if (!shader)
-                continue;
-            ShaderDescription description;
-            if (!reader.Shader(row, attributes, *shader, description))
-                return false;
-            for (const ShaderDescription& other : out)
-                if (other.name == description.name)
-                {
-                    error = Format("shader {} is defined twice", description.name);
+            Reader reader{*x, error};
+            for (u32 row = 1; row <= x->RowCount(Table::TypeDef); row++)
+            {
+                Array<Attribute> attributes = Attributes(*x, Token(Table::TypeDef, row));
+                const Attribute* shader = Find(attributes, "ShaderAttribute");
+                if (!shader)
+                    continue;
+                ShaderDescription description;
+                if (!reader.Shader(row, attributes, *shader, description))
                     return false;
-                }
-            out.Push(Move(description));
+                for (const ShaderDescription& other : out)
+                    if (other.name == description.name)
+                    {
+                        error = Format("shader {} is defined twice", description.name);
+                        return false;
+                    }
+                out.Push(Move(description));
+            }
         }
-        return true;
+        return ResolveUsePasses(out, error);
     }
 }

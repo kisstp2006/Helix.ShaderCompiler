@@ -41,7 +41,15 @@ namespace helix::shadercompiler
         for (u32 stage = 0; stage < 2; stage++)
         {
             Module module;
-            if (!TranslateEntryPoint(assembly, methods[stage], stage == 0 ? Stage::Vertex : Stage::Fragment, module, error))
+            // A pass taken with UsePass keeps the code of its own assembly.
+            const Assembly& code = pass.assembly ? *pass.assembly : assembly;
+            if (!pass.usePass.Empty())
+            {
+                error = Format("shader {}: UsePass {} is not resolved; read the shaders with ReadShaderDefinitions or ResolveUsePasses", shader.name,
+                               pass.usePass);
+                return false;
+            }
+            if (!TranslateEntryPoint(code, methods[stage], stage == 0 ? Stage::Vertex : Stage::Fragment, module, error))
                 return false;
             for (const KeywordUse& use : module.keywords)
             {

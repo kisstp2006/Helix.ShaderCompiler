@@ -136,6 +136,70 @@ public sealed class Layered : ShaderDefinition
     }
 }
 
+/// <summary>Takes passes of other shaders: one of this assembly and one of the include assembly.</summary>
+[Shader("Tests/Borrowing")]
+public sealed class Borrowing : ShaderDefinition
+{
+    [UsePass("Tests/Glass/DEPTH")]
+    public static class Depth
+    {
+    }
+
+    [UsePass("Includes/Shadow/SHADOWCASTER")]
+    public static class Shadow
+    {
+    }
+
+    [Pass("Main")]
+    public static class Main
+    {
+        [VertexShader]
+        [return: Position]
+        public static float4 Vertex([Location(0)] float2 p) => new float4(p, 0.0f, 1.0f);
+
+        [FragmentShader]
+        [return: Target(0)]
+        public static float4 Fragment() => new float4(1.0f);
+    }
+}
+
+// UsePass entries that cannot be resolved; they are read on their own and resolved together.
+[Shader("Tests/UsesNothing")]
+public sealed class UsesNothing : ShaderDefinition
+{
+    [UsePass("Tests/Nowhere/FORWARD")]
+    public static class Missing
+    {
+    }
+}
+
+[Shader("Tests/UsesNoPass")]
+public sealed class UsesNoPass : ShaderDefinition
+{
+    [UsePass("Tests/Glass/OUTLINE")]
+    public static class Missing
+    {
+    }
+}
+
+[Shader("Tests/LoopA")]
+public sealed class LoopA : ShaderDefinition
+{
+    [UsePass("Tests/LoopB/X")]
+    public static class X
+    {
+    }
+}
+
+[Shader("Tests/LoopB")]
+public sealed class LoopB : ShaderDefinition
+{
+    [UsePass("Tests/LoopA/X")]
+    public static class X
+    {
+    }
+}
+
 // Definitions that cannot work; each is read on its own.
 [Shader("Tests/BadMix")]
 public sealed class BadMix : ShaderDefinition

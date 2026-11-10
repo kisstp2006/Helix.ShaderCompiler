@@ -3,6 +3,7 @@
 #include <Helix/ShaderCompiler/Backends/Glsl.h>
 #include <Helix/ShaderCompiler/Definition/ShaderDefinition.h>
 #include <Helix/ShaderCompiler/Frontend/Frontend.h>
+#include <Helix/ShaderCompiler/Variants/Variants.h>
 #include <Helix/Testing/Test.h>
 
 #include <cstdio>
@@ -159,6 +160,65 @@ HX_TEST(Definition, ReadsSubShaders)
     HX_CHECK(!ReadShaderDefinition(a, a.FindType("Helix.ShaderTests", "BadMix"), bad, error));
     std::printf("    %s\n", error.CStr());
     HX_CHECK(StringView(error).Contains("next to SubShader classes"));
+}
+
+HX_TEST(Definition, TakesPassesWithUsePass)
+{
+    Assembly a, includes;
+    HX_REQUIRE(a.Load(TestShadersImage()) && includes.Load(ShaderIncludesImage()));
+    String error;
+    // The shaders of the include assembly, then two of the test shaders, resolved together.
+    Array<ShaderDescription> shaders;
+    HX_REQUIRE(ReadShaderDefinitions(includes, shaders, error) && shaders.Size() == 1u && shaders[0].name == "Includes/Shadow");
+    const char* names[] = {"Borrowing", "Glass"};
+    for (const char* name : names)
+    {
+        ShaderDescription d;
+        HX_REQUIRE(ReadShaderDefinition(a, a.FindType("Helix.ShaderTests", name), d, error));
+        shaders.Push(Move(d));
+    }
+    HX_CHECK(!shaders[1].passes[0].usePass.Empty() && shaders[1].passes[0].vertex == 0);
+    bool ok = ResolveUsePasses(shaders, error);
+    if (!ok)
+        std::printf("    %s\n", error.CStr());
+    HX_REQUIRE(ok);
+    const ShaderDescription& borrowing = shaders[1];
+    const ShaderDescription& glass = shaders[2];
+    HX_REQUIRE(borrowing.passes.Size() == 3u);
+    const ShaderPass& depth = borrowing.passes[0];
+    const ShaderPass& shadow = borrowing.passes[1];
+    HX_CHECK(depth.usePass.Empty() && depth.name == "Depth" && depth.lightMode == "DepthOnly" && depth.vertex == glass.FindPass("Depth")->vertex &&
+             depth.state.colorMask == 0 && depth.assembly == &a);
+    HX_CHECK(shadow.name == "ShadowCaster" && shadow.lightMode == "ShadowCaster" && shadow.assembly == &includes && shadow.subShader == 0);
+    HX_CHECK(borrowing.passes[2].name == "Main" && borrowing.passes[2].assembly == &a);
+
+    // The code of a borrowed pass is translated in its own assembly; its keywords make the variants.
+    VariantSet set;
+    ok = EnumerateVariants(a, borrowing, shadow, {}, set, error);
+    if (!ok)
+        std::printf("    %s\n", error.CStr());
+    HX_REQUIRE(ok);
+    HX_CHECK(set.keywords.Size() == 1u && set.keywords[0] == "Soft" && set.variants.Size() == 2u);
+
+    // Missing shaders and passes and loops are errors.
+    const char* bad[][2] = {{"UsesNothing", "no shader Tests/Nowhere"}, {"UsesNoPass", "has no pass OUTLINE"}, {"LoopA", "comes back to itself"}};
+    for (const auto& b : bad)
+    {
+        Array<ShaderDescription> some;
+        ShaderDescription d;
+        HX_REQUIRE(ReadShaderDefinition(a, a.FindType("Helix.ShaderTests", b[0]), d, error));
+        some.Push(Move(d));
+        const char* other = StringView(b[0]) == "LoopA" ? "LoopB" : "Glass";
+        HX_REQUIRE(ReadShaderDefinition(a, a.FindType("Helix.ShaderTests", other), d, error));
+        some.Push(Move(d));
+        HX_CHECK(!ResolveUsePasses(some, error));
+        std::printf("    %s\n", error.CStr());
+        HX_CHECK(StringView(error).Contains(b[1]));
+    }
+    // An unresolved UsePass cannot make variants.
+    ShaderDescription unresolved;
+    HX_REQUIRE(ReadShaderDefinition(a, a.FindType("Helix.ShaderTests", "Borrowing"), unresolved, error));
+    HX_CHECK(!EnumerateVariants(a, unresolved, unresolved.passes[0], {}, set, error) && StringView(error).Contains("not resolved"));
 }
 
 HX_TEST(Definition, ReadsEveryShaderAndReportsBadOnes)

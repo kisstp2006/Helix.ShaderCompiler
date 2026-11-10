@@ -87,6 +87,12 @@ SubShader with the LOD and tags of the shader. Declarations that cannot work are
 a property type materials cannot hold, a pass without both entry points, a toggle naming a keyword the shader does not
 have, a name used twice, passes next to SubShader classes.
 
+`[UsePass("Shader/PASS")]` on an empty nested class takes a pass of another shader: `ReadShaderDefinitions` reads the
+shaders of the assembly and of the referenced assemblies (its last argument) and replaces every UsePass with a copy of
+the pass, matched without case in the first SubShader that has it. `ShaderPass::assembly` is where its code lives, which
+`EnumerateVariants` translates. `ReadShaderDefinition` reads one class and leaves UsePass entries for
+`ResolveUsePasses`; a missing shader or pass and a chain of UsePass that comes back are errors.
+
 ## Variants and the cache
 
 ```cpp
@@ -370,6 +376,8 @@ cannot be indexed.
   block layout in reflection and GLSL; a user uniform on the keyword slot is rejected.
 - Debug information: lines from the PDB next to the test shaders and from the one embedded in Tests/Includes, damaged
   PDBs, and errors that name the line of the C# source, also inside a called method.
+- Definitions: SubShaders with inherited render state, passes taken with UsePass from this assembly and from Tests/Includes
+  (their variants come from the keywords of the borrowed code), missing shaders and passes, UsePass loops.
 - Includes: structs, an enum, a readonly property and functions of Tests/Includes, a uniform struct of it, and a
   capturing lambda passed into one of its functions; resources declared there are bound by slot; without the
   assembly the error names TranslateOptions::references. The resolver finds the references in memory and on disk.
