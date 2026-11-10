@@ -193,6 +193,13 @@ HX_TEST(Glsl, EmitsComputeShadersWithStorageBuffers)
                EmitGlsl(module, GlslTarget::Glsl330, desktop, error) && EmitGlsl(module, GlslTarget::Essl300, mobile, error));
     HX_CHECK(StringView(desktop.source).Contains("vec4[3]") && StringView(desktop.source).Contains("float[4]") &&
              StringView(mobile.source).Contains("vec4[3]"));
+
+    // Local functions and their closure struct get names that are valid GLSL identifiers.
+    u32 locals = a.FindType("Helix.ShaderTests.Cases", "LocalFunctions");
+    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(locals, "Fragment"), Stage::Fragment, module, error) &&
+               EmitGlsl(module, GlslTarget::Essl300, mobile, error));
+    HX_CHECK(StringView(mobile.source).Contains("DisplayClass") && StringView(mobile.source).Contains("Scaled") &&
+             !StringView(mobile.source).Contains("<") && !StringView(mobile.source).Contains("|") && !StringView(mobile.source).Contains("__"));
 }
 
 HX_TEST(Glsl, RejectsWhatTheGpuCannotRun)

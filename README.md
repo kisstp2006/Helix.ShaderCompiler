@@ -272,7 +272,8 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
   constant or computed indices. In a uniform block every element starts on 16 bytes, so the elements must be `float4`,
   matrices or structs padded to a multiple of 16 bytes; other elements are rejected with the sizes on both sides. Fixed
   buffers (`fixed float x[4]`) need unsafe code and are rejected with a message that names `[InlineArray]`.
-- Static methods, generic methods, `ref`, `out` and `in` parameters, ref locals, methods of user structs.
+- Static methods, generic methods, `ref`, `out` and `in` parameters, ref locals, methods of user structs, local
+  functions (also ones that read and write variables of the enclosing method).
 - Vector components and matrix columns by index (`v[i]`, `m[i]`), also written at computed positions.
 - `if`, `for`, `while`, `do`, `switch`, `break`, `continue`, early `return`, `?:`, `&&`, `||`.
 - The functions of `ShaderMath`, `Texture2D<T>`, `Texture2DArray<T>`, `Texture3D<T>` and `TextureCube<T>` with float, int or uint
@@ -329,6 +330,8 @@ cannot be indexed.
   bytecode on every adapter; the buffers must be the same byte by byte, texels within the last bit.
 - Half precision: locals, a helper with half parameters and a half4 target; GLSL ES declarations are `mediump`, other
   targets are unchanged; half in a uniform block and in a vertex input is rejected.
+- Local functions: a static one, ones that capture a parameter and locals (changed after the capture), one that
+  counts its calls in a captured local, and a nested one with a ref parameter.
 - Inline arrays: a uniform block with an array of float4 and an array of structs, a local struct holding an array of
   floats, an array passed to a helper, and reads and writes at computed indices; scalar elements in a uniform block and a
   fixed buffer are rejected.

@@ -11,6 +11,25 @@ namespace helix::shadercompiler
 {
     namespace
     {
+        // A C# name as a GLSL identifier: the C# compiler names local functions, closures and backing fields with
+        // characters like < > |, and GLSL reserves names with two underscores in a row. Every emitted name has a
+        // prefix (S_, m_, p_, f_, g_), so the result may start with a digit.
+        String Ident(StringView name)
+        {
+            String out;
+            for (char c : name)
+            {
+                bool valid = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+                if (valid)
+                    out.Append(c);
+                else if (!out.Empty() && out[out.Size() - 1] != '_')
+                    out.Append('_');
+            }
+            while (!out.Empty() && out[out.Size() - 1] == '_')
+                out.Resize(out.Size() - 1);
+            return out;
+        }
+
         struct Emitter
         {
             const Module& m;
@@ -40,7 +59,7 @@ namespace helix::shadercompiler
                 static constexpr const char* kScalar[] = {"void", "bool", "int", "uint", "float"};
                 static constexpr const char* kVector[] = {"", "bvec", "ivec", "uvec", "vec"};
                 if (t.base == BaseType::Struct)
-                    return Format("S_{}_{}", m.structs[t.structIndex].name, u32(t.structIndex));
+                    return Format("S_{}_{}", Ident(m.structs[t.structIndex].name), u32(t.structIndex));
                 if (t.base == BaseType::Array)
                     return Format("{}[{}]", TypeName(m.arrays[t.structIndex].element), m.arrays[t.structIndex].length);
                 if (t.IsTexture())
@@ -399,11 +418,11 @@ namespace helix::shadercompiler
                     break;
                 case ExprKind::ConstBool: out.Append(e.integer ? "true" : "false"); break;
                 case ExprKind::Local: out.Append(fn->locals[e.index].name); break;
-                case ExprKind::Param: FormatAppend(out, "p_{}", fn->params[e.index].name); break;
+                case ExprKind::Param: FormatAppend(out, "p_{}", Ident(fn->params[e.index].name)); break;
                 case ExprKind::Global: FormatAppend(out, "g_{}", m.globals[e.index].name); break;
                 case ExprKind::Field:
                     Value(e.a);
-                    FormatAppend(out, ".m_{}", m.structs[fn->exprs[e.a].type.structIndex].fields[e.index].name);
+                    FormatAppend(out, ".m_{}", Ident(m.structs[fn->exprs[e.a].type.structIndex].fields[e.index].name));
                     break;
                 case ExprKind::Swizzle:
                     Value(e.a);
@@ -456,7 +475,7 @@ namespace helix::shadercompiler
                     out.Append(')');
                     break;
                 case ExprKind::Call:
-                    FormatAppend(out, "{}(", m.functions[e.index].name);
+                    FormatAppend(out, "{}(", Ident(m.functions[e.index].name));
                     Args(e);
                     out.Append(')');
                     break;
@@ -548,11 +567,11 @@ namespace helix::shadercompiler
             void FunctionBody(const Function& f)
             {
                 fn = &f;
-                FormatAppend(out, "{} {}(", Decl(f.returnType), f.name);
+                FormatAppend(out, "{} {}(", Decl(f.returnType), Ident(f.name));
                 for (usize i = 0; i < f.params.Size(); i++)
                 {
                     static constexpr const char* kModes[] = {"in", "out", "inout"};
-                    FormatAppend(out, "{}{} {} p_{}", i ? ", " : "", kModes[u32(f.params[i].mode)], Decl(f.params[i].type), f.params[i].name);
+                    FormatAppend(out, "{}{} {} p_{}", i ? ", " : "", kModes[u32(f.params[i].mode)], Decl(f.params[i].type), Ident(f.params[i].name));
                 }
                 out.Append(")\n{\n");
                 indent = 1;
@@ -647,7 +666,7 @@ namespace helix::shadercompiler
                         {
                             if (!Interface(f.semantic, f.semanticIndex, f.type, f.flat, true, expression, Format("field {} of parameter {}", f.name, p.name)))
                                 return false;
-                            FormatAppend(body, "    {}.m_{} = {};\n", local, f.name, expression);
+                            FormatAppend(body, "    {}.m_{} = {};\n", local, Ident(f.name), expression);
                         }
                         arguments.Push(Move(local));
                     }
@@ -658,7 +677,7 @@ namespace helix::shadercompiler
                         arguments.Push(Move(expression));
                     }
                 }
-                String call = Format("{}(", entry.name);
+                String call = Format("{}(", Ident(entry.name));
                 for (usize i = 0; i < arguments.Size(); i++)
                     FormatAppend(call, "{}{}", i ? ", " : "", arguments[i]);
                 call.Append(")");
@@ -673,7 +692,7 @@ namespace helix::shadercompiler
                     {
                         if (!Interface(f.semantic, f.semanticIndex, f.type, f.flat, false, expression, Format("field {} of the return value", f.name)))
                             return false;
-                        FormatAppend(body, "    {} = r.m_{};\n", expression, f.name);
+                        FormatAppend(body, "    {} = r.m_{};\n", expression, Ident(f.name));
                     }
                 }
                 else
@@ -713,7 +732,7 @@ namespace helix::shadercompiler
                 {
                     FormatAppend(out, "struct {}\n{{\n", TypeName(Type::Struct(u32(i))));
                     for (const StructField& f : m.structs[i].fields)
-                        FormatAppend(out, "    {} m_{};\n", Decl(f.type), f.name);
+                        FormatAppend(out, "    {} m_{};\n", Decl(f.type), Ident(f.name));
                     out.Append("};\n");
                 }
                 for (const Global& g : m.globals)

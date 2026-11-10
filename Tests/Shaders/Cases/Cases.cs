@@ -868,3 +868,36 @@ public static class InlineArrays
         return new float4(color.xyz + scene.ambient.xyz + new float3(mix.bias), 1.0f);
     }
 }
+
+/// <summary>Local functions: static ones, ones that capture locals and parameters, and nested ones.</summary>
+public static class LocalFunctions
+{
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        float gain = 0.5f + uv.x * 0.25f;
+        int steps = 0;
+
+        static float Square(float v) => v * v;
+
+        float Scaled(float v)
+        {
+            steps++;
+            return v * gain;
+        }
+
+        void Bump(ref float target)
+        {
+            float Twice(float v) => Scaled(v) * 2.0f;
+            target += Twice(uv.y) * 0.25f;
+        }
+
+        float r = Scaled(Square(uv.x));
+        float g = uv.y;
+        Bump(ref g);
+        gain = 0.75f;
+        float b = Scaled(0.5f);
+        return new float4(r, g * 0.5f, b, steps * 0.25f);
+    }
+}
