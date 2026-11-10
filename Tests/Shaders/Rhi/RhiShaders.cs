@@ -209,6 +209,29 @@ public static class Gradient
         image[new int2((int)id.x, (int)id.y)] = new float4(id.x / 15.0f, id.y / 15.0f, 0.0f, 1.0f);
 }
 
+/// <summary>Every texel of the first mip of a texture into a buffer, rows top first, as the GPU decodes it.</summary>
+public static class LoadTexels
+{
+    public struct Size
+    {
+        public uint width;
+        public uint height;
+        public uint unused0;
+        public uint unused1;
+    }
+
+    [Uniform(0)] public static Size size;
+    [Texture(0)] public static Texture2D<float4> source;
+    [Storage(0)] public static RWStructuredBuffer<float4> texels;
+
+    [ComputeShader(8, 8)]
+    public static void Compute([DispatchThreadId] uint3 id)
+    {
+        if (id.x < size.width && id.y < size.height)
+            texels[(int)(id.y * size.width + id.x)] = source.Load(new int2((int)id.x, (int)id.y));
+    }
+}
+
 /// <summary>Appends the two triangles of every visible quad and counts the vertices in the draw arguments.</summary>
 public static class Cull
 {
