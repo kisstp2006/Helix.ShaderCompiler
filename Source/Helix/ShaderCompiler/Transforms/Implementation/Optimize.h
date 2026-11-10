@@ -9,6 +9,10 @@ namespace helix::shadercompiler::passes
     // that value wherever it is read; its assignment goes away.
     bool PropagateCopies(Module& module, String& error);
 
+    // An operation computed again in a straight run of statements, with the variables it reads unchanged, reads the
+    // local the first statement now computes it into.
+    bool EliminateCommonSubexpressions(Module& module, String& error);
+
     // Assignments to locals nothing reads (when the value has no effect), then locals nothing refers to, then
     // parameters of helper functions nothing reads (with their arguments, when those have no effect).
     bool RemoveDeadCode(Module& module, String& error);

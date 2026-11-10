@@ -1068,3 +1068,22 @@ public static class DeadCode
         return new float4(Pick(copy.y, uv.x * 2.0f), copy.x, 0.25f, 1.0f);
     }
 }
+
+/// <summary>Operations computed more than once: the first statement keeps the value, later ones read it, except across
+/// a branch and after a variable they read changed.</summary>
+public static class Repeated
+{
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        float a = Sin(uv.x * 3.0f) * 0.5f + 0.5f;
+        float b = Sin(uv.x * 3.0f) * 0.25f + uv.y * uv.y;
+        float c = uv.y * uv.y + a;
+        if (c > 0.5f)
+            a = Sin(uv.x * 3.0f) * 0.125f;
+        uv.x += 0.25f;
+        float d = Sin(uv.x * 3.0f) * 0.5f + 0.5f;
+        return new float4(a, b, Saturate(c * 0.5f), d);
+    }
+}

@@ -354,6 +354,7 @@ namespace helix::shadercompiler
         constexpr Pass kPasses[] = {
             {"simplify", SimplifyPass},
             {"copies", passes::PropagateCopies},
+            {"common subexpressions", passes::EliminateCommonSubexpressions},
             {"dead code", passes::RemoveDeadCode},
         };
     }

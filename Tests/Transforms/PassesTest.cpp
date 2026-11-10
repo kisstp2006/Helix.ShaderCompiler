@@ -5,6 +5,7 @@
 #include <Helix/Testing/Test.h>
 
 #include <cstdio>
+#include <cstdlib>
 
 using namespace helix;
 using namespace helix::shadercompiler;
@@ -150,4 +151,38 @@ HX_TEST(Passes, RemoveDeadCodeAndCopies)
     std::printf("    entry locals: %zu after simplify, %zu at the end; Pick takes %zu\n", seen.localsFirst, seen.localsLast, seen.pickParams);
     // The C# compiler drops the unread local itself; the copy of the parameter is left to the passes.
     HX_CHECK(seen.localsFirst >= 1 && seen.localsLast == 0 && seen.pickParams == 1);
+}
+
+HX_TEST(Passes, ComputeRepeatedOperationsOnce)
+{
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    // Counts the sine calls in the printed module before and after the pass.
+    struct Seen
+    {
+        usize before = 0, after = 0;
+    } seen;
+    TranslateOptions options;
+    options.passes.user = &seen;
+    options.passes.dump = [](StringView pass, const Module& module, void* user) {
+        Seen& s = *static_cast<Seen*>(user);
+        String text;
+        PrintModule(module, text);
+        usize count = 0;
+        for (usize at = 0; (at = StringView(text).Find("sin(", at)) != StringView::npos; at++)
+            count++;
+        if (pass == "copies")
+        {
+            s.before = count;
+            if (std::getenv("HELIX_PRINT_PASSES"))
+                std::printf("%s\n", text.CStr());
+        }
+        if (pass == "common subexpressions")
+            s.after = count;
+    };
+    Module module;
+    HX_REQUIRE(Translate(a, "Repeated", module, options));
+    std::printf("    sine calls: %zu before, %zu after\n", seen.before, seen.after);
+    // One for the first two statements, one in the branch, one after uv.x changed.
+    HX_CHECK(seen.before == 4 && seen.after == 3);
 }
