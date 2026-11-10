@@ -352,7 +352,7 @@ namespace helix::shadercompiler
         }
 
         constexpr Pass kPasses[] = {
-            {"simplify", SimplifyPass},
+            {"simplify", SimplifyPass, true},
             {"unroll", passes::UnrollLoops},
             // Unrolled bodies have constant counters to fold.
             {"simplify again", SimplifyPass},
@@ -409,6 +409,8 @@ namespace helix::shadercompiler
         }
         for (const Pass& pass : ShaderPasses())
         {
+            if (!pass.required && !options.optimize)
+                continue;
             if (!pass.run(module, error))
                 return false;
             if (options.dump)

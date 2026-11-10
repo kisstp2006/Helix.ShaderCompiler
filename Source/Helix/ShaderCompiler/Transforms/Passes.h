@@ -19,6 +19,8 @@ namespace helix::shadercompiler
     {
         StringView name;
         bool (*run)(Module& module, String& error);
+        // Needed for correct code (simplify removes the branches of other variants); the others only optimize.
+        bool required = false;
     };
 
     // The passes in the order they run. A new pass is one entry of this table.
@@ -32,6 +34,8 @@ namespace helix::shadercompiler
 #else
         bool verify = true;
 #endif
+        // Off: only the required passes run, as a reference for what the others gain.
+        bool optimize = true;
         // Called with the module after every pass, for debugging.
         void (*dump)(StringView pass, const Module& module, void* user) = nullptr;
         void* user = nullptr;

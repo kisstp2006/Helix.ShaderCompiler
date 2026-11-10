@@ -388,6 +388,8 @@ cannot be indexed.
   a short loop on its own, and keeps the loop of a [Loop] method; LinkStages drops the uv a depth pass never reads and
   refuses a fragment stage that reads a location the vertex stage does not write; every execution case draws with a
   vertex stage linked to it.
+- Measurement: every case and kernel compiled with and without the optimizing passes (`PassOptions::optimize`), with
+  the Direct3D instructions and the GLSL size of each printed.
 - Kernel variants: a kernel with a bool and an enum keyword runs once per combination, compiled through the cache; the
   variants of the kernels of a compute definition for the three compute targets.
 - Dynamic keywords: a bool and an enum read from the keyword block next to a plain keyword, every combination; the
