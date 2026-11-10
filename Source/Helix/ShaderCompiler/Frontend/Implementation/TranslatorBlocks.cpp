@@ -597,6 +597,22 @@ namespace helix::shadercompiler::frontend
                     break;
                 }
         }
+        // Damaged IL may name locals and arguments the method does not have.
+        for (const Instruction& i : mt.code)
+        {
+            u32 op = u32(i.opcode);
+            bool arg = i.opcode == Opcode::LdargS || i.opcode == Opcode::Ldarg || i.opcode == Opcode::LdargaS || i.opcode == Opcode::Ldarga ||
+                       i.opcode == Opcode::StargS || i.opcode == Opcode::Starg || (op >= u32(Opcode::Ldarg0) && op <= u32(Opcode::Ldarg3));
+            bool loc = i.opcode == Opcode::LdlocS || i.opcode == Opcode::Ldloc || i.opcode == Opcode::LdlocaS || i.opcode == Opcode::Ldloca ||
+                       i.opcode == Opcode::StlocS || i.opcode == Opcode::Stloc || (op >= u32(Opcode::Ldloc0) && op <= u32(Opcode::Ldloc3)) ||
+                       (op >= u32(Opcode::Stloc0) && op <= u32(Opcode::Stloc3));
+            u64 index = op >= u32(Opcode::Ldarg0) && op <= u32(Opcode::Ldarg3)   ? op - u32(Opcode::Ldarg0)
+                        : op >= u32(Opcode::Ldloc0) && op <= u32(Opcode::Ldloc3) ? op - u32(Opcode::Ldloc0)
+                        : op >= u32(Opcode::Stloc0) && op <= u32(Opcode::Stloc3) ? op - u32(Opcode::Stloc0)
+                                                                                 : u64(i.value);
+            if ((arg && index >= mt.argParam.Size()) || (loc && index >= mt.isRef.Size()))
+                return Fail(mt.name, Format("damaged IL at offset {}: there is no {} {}", i.offset, arg ? "argument" : "local", index));
+        }
         for (const Instruction& decoded : mt.code)
         {
             in = decoded;

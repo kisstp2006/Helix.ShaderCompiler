@@ -429,6 +429,11 @@ namespace helix::shadercompiler
             bool Run(Array<Stmt>& out)
             {
                 count = blocks.Size();
+                // Damaged IL can leave a block without the successors its end needs.
+                for (usize b = 0; b < count; b++)
+                    for (u32 s = 0; s < SuccessorCount(i32(b)); s++)
+                        if (blocks[b].succ[s] < 0 || usize(blocks[b].succ[s]) >= count)
+                            return Fail("damaged control flow: a block ends without a target");
                 ComputeOrder();
                 Simplify();
                 MergeShortCircuits();

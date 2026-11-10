@@ -15,6 +15,10 @@ namespace helix::shadercompiler::frontend
 
     bool Translator::TextureCall(Method& mt, StringView member, Array<Item>& args)
     {
+        // A member reference with a damaged signature brings fewer arguments than the member takes.
+        usize needed = member == "get_Size" ? 1 : member.StartsWith("SampleCmp") ? 4 : 3;
+        if (args.Size() < needed)
+            return Fail(mt.name, Format("texture member {} without its arguments", member));
         i32 global = ResourceOf(mt, args[0].e, "texture", [](const Global& g) { return g.type.IsTexture(); });
         if (global < 0)
             return false;
@@ -99,6 +103,8 @@ namespace helix::shadercompiler::frontend
 
     bool Translator::ImageCall(Method& mt, StringView member, Array<Item>& args)
     {
+        if (args.Size() < (member == "set_Item" ? 3u : member == "get_Item" ? 2u : 1u))
+            return Fail(mt.name, Format("storage texture member {} without its arguments", member));
         i32 global = ResourceOf(mt, args[0].e, "storage texture", [](const Global& g) { return g.type.base == BaseType::Image; });
         if (global < 0)
             return false;
@@ -131,6 +137,8 @@ namespace helix::shadercompiler::frontend
 
     bool Translator::BufferCall(Method& mt, StringView member, Array<Item>& args)
     {
+        if (args.Size() < (member == "set_Item" ? 3u : member == "get_Item" ? 2u : 1u))
+            return Fail(mt.name, Format("buffer member {} without its arguments", member));
         i32 global = ResourceOf(mt, args[0].e, "buffer", [](const Global& g) { return g.kind == GlobalKind::Storage; });
         if (global < 0)
             return false;
@@ -161,6 +169,8 @@ namespace helix::shadercompiler::frontend
 
     bool Translator::LibraryCall(Method& mt, StringView typeName, StringView member, const MethodSig& sig, Array<Item>& args, bool isNew, bool& unknown)
     {
+        if (args.Size() < sig.params.Size() + (sig.hasThis && !isNew ? 1u : 0u) || (args.Empty() && member != "Discard" && !isNew))
+            return Fail(mt.name, Format("{}.{} without its arguments", typeName, member));
         Type result = kVoid, self;
         bool byRef = false;
         if (!MapType(sig.returnType, &mt, result, byRef, mt.name))
@@ -323,6 +333,8 @@ namespace helix::shadercompiler::frontend
             return true;
         }
         bool getter = member.StartsWith("get_"), setter = member.StartsWith("set_");
+        if ((getter && args.Size() < 1) || (setter && args.Size() < 2))
+            return Fail(mt.name, Format("{}.{} without its arguments", typeName, member));
         if ((getter || setter) && self.IsVector())
         {
             StringView names = member.Substr(4);
