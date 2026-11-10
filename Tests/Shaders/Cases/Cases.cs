@@ -362,9 +362,9 @@ public static class Uniforms
 
 public static class Textures
 {
-    [Texture(0)] public static Texture2D image;
+    [Texture(0)] public static Texture2D<float4> image;
     [Sampler(0)] public static SamplerState imageSampler;
-    [Texture(1)] public static Texture2D smooth;
+    [Texture(1)] public static Texture2D<float4> smooth;
     [Sampler(1)] public static SamplerState smoothSampler;
 
     public static void Setup()
@@ -374,9 +374,9 @@ public static class Textures
         for (int y = 0; y < 4; y++)
             for (int x = 0; x < 4; x++)
                 pixels[y * 4 + x] = new float4(x * 85 / 255.0f, y * 85 / 255.0f, (x ^ y) & 1, 1.0f);
-        image = Texture2D.FromPixels(pixels, 4, 4);
+        image = Texture2D<float4>.FromTexels(pixels, 4, 4);
         imageSampler = new SamplerState { Filter = SamplerFilter.Nearest, Address = SamplerAddress.Repeat };
-        smooth = Texture2D.FromPixels(new float4[] { new(1, 0, 0, 1), new(0, 1, 0, 1), new(0, 0, 1, 1), new(1, 1, 1, 1) }, 2, 2);
+        smooth = Texture2D<float4>.FromTexels(new float4[] { new(1, 0, 0, 1), new(0, 1, 0, 1), new(0, 0, 1, 1), new(1, 1, 1, 1) }, 2, 2);
         smoothSampler = new SamplerState { Filter = SamplerFilter.Linear, Address = SamplerAddress.Clamp };
     }
 
@@ -406,12 +406,12 @@ public static class Keywords
     [Keyword(KeywordScope.Global)] public static Detail Quality;
 
     // Only the Stripes variants read the texture, only the High variants call Fine.
-    [Texture(0)] public static Texture2D pattern;
+    [Texture(0)] public static Texture2D<float4> pattern;
     [Sampler(0)] public static SamplerState patternSampler;
 
     public static void Setup()
     {
-        pattern = Texture2D.FromPixels(new float4[] { new(1, 1, 1, 1), new(0, 0, 0, 1), new(0, 0, 0, 1), new(1, 1, 1, 1) }, 2, 2);
+        pattern = Texture2D<float4>.FromTexels(new float4[] { new(1, 1, 1, 1), new(0, 0, 0, 1), new(0, 0, 0, 1), new(1, 1, 1, 1) }, 2, 2);
         patternSampler = new SamplerState { Filter = SamplerFilter.Nearest, Address = SamplerAddress.Repeat };
     }
 
@@ -534,8 +534,8 @@ public static class BindlessResources
         for (int y = 0; y < 4; y++)
             for (int x = 0; x < 4; x++)
                 pixels[y * 4 + x] = new float4(x * 85 / 255.0f, y * 85 / 255.0f, (x ^ y) & 1, 1.0f);
-        data.checker = Bindless.Register(Texture2D.FromPixels(pixels, 4, 4), new SamplerState { Filter = SamplerFilter.Nearest, Address = SamplerAddress.Repeat });
-        data.smooth = Bindless.Register(Texture2D.FromPixels(new float4[] { new(1, 0, 0, 1), new(0, 1, 0, 1), new(0, 0, 1, 1), new(1, 1, 1, 1) }, 2, 2),
+        data.checker = Bindless.Register(Texture2D<float4>.FromTexels(pixels, 4, 4), new SamplerState { Filter = SamplerFilter.Nearest, Address = SamplerAddress.Repeat });
+        data.smooth = Bindless.Register(Texture2D<float4>.FromTexels(new float4[] { new(1, 0, 0, 1), new(0, 1, 0, 1), new(0, 0, 1, 1), new(1, 1, 1, 1) }, 2, 2),
                                         new SamplerState { Filter = SamplerFilter.Linear, Address = SamplerAddress.Clamp });
         float4[] colors = { new(1.0f, 0.0f, 0.5f, 1.0f), new(0.0f, 1.0f, 0.25f, 1.0f), new(0.5f, 0.5f, 1.0f, 1.0f), new(0.25f, 0.75f, 0.0f, 1.0f) };
         uint[] words = new uint[16];
@@ -611,5 +611,51 @@ public static class IndexedWrites
         float3 column = m[2 - j];
         float3 sum = m[0] + m[1] + m[2];
         return new float4(v.x * 0.5f + column.x * 0.5f, v.y * 0.5f + sum.y * 0.2f, v.z * 0.5f + v.w * 0.5f, sum.z * 0.3f);
+    }
+}
+
+/// <summary>Textures of other texel types: float ones sampled, integer ones loaded.</summary>
+public static class TypedTextures
+{
+    [Texture(0)] public static Texture2D<float> heights;
+    [Sampler(0)] public static SamplerState heightSampler;
+    [Texture(1)] public static Texture2D<float2> offsets;
+    [Sampler(1)] public static SamplerState offsetSampler;
+    [Texture(2)] public static Texture2D<uint> ids;
+    [Texture(3)] public static Texture2D<uint2> pairs;
+    [Texture(4)] public static Texture2D<int> signs;
+    [Texture(5)] public static Texture2D<int4> quads;
+
+    public static void Setup()
+    {
+        heights = Texture2D<float>.FromTexels(new[] { 0.0f, 0.25f, 0.5f, 1.0f }, 2, 2);
+        heightSampler = new SamplerState { Filter = SamplerFilter.Linear, Address = SamplerAddress.Clamp };
+        offsets = Texture2D<float2>.FromTexels(new[] { new float2(0.125f, 0.75f), new float2(0.5f, 0.25f), new float2(1.0f, 0.0f), new float2(0.375f, 0.625f) }, 4, 1);
+        offsetSampler = new SamplerState { Filter = SamplerFilter.Nearest, Address = SamplerAddress.Repeat };
+        uint[] idTexels = new uint[16];
+        for (int i = 0; i < 16; i++)
+            idTexels[i] = (uint)(i * 37 + 3) & 255u;
+        ids = Texture2D<uint>.FromTexels(idTexels, 4, 4);
+        pairs = Texture2D<uint2>.FromTexels(new[] { new uint2(10, 200), new uint2(255, 0), new uint2(64, 128), new uint2(1, 2) }, 2, 2);
+        signs = Texture2D<int>.FromTexels(new[] { -100, 50, 0, -255 }, 2, 2);
+        quads = Texture2D<int4>.FromTexels(new[] { new int4(-1, 2, -3, 4), new int4(100, -100, 25, -25) }, 2, 1);
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        float h = heights.Sample(heightSampler, uv);
+        float2 o = offsets.SampleLevel(offsetSampler, uv, 0.0f);
+        int2 cell = new int2((int)(uv.x * 4.0f), (int)(uv.y * 4.0f));
+        uint id = ids.Load(cell, 0);
+        uint2 pair = pairs.Load(new int2(cell.x / 2, cell.y / 2), 0);
+        int sign = signs.Load(new int2(cell.y / 2, cell.x / 2), 0);
+        int4 quad = quads.Load(new int2(cell.x / 2, 0), 0);
+        int2 size = quads.Size;
+        float a = (pair.x + pair.y) / 510.0f;
+        float b = (sign + 255) / 510.0f;
+        float c = (quad.x + quad.y + quad.z + quad.w + 200) / 400.0f;
+        return new float4(h * 0.5f + o.x * 0.5f, id / 255.0f * 0.5f + a * 0.5f, b * 0.5f + c * 0.25f + o.y * 0.25f, size.x / 2.0f);
     }
 }

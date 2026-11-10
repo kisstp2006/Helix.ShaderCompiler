@@ -88,7 +88,7 @@ public struct UvVaryings
 
 public static class Textured
 {
-    [Texture(3)] public static Texture2D image;
+    [Texture(3)] public static Texture2D<float4> image;
     [Sampler(3)] public static SamplerState imageSampler;
 
     [VertexShader]
@@ -161,7 +161,7 @@ public static class Scene
     }
 
     [Uniform(0)] public static Mode settings;
-    [Texture(0)] public static Texture2D image;
+    [Texture(0)] public static Texture2D<float4> image;
     [Sampler(0)] public static SamplerState imageSampler;
 
     [VertexShader]

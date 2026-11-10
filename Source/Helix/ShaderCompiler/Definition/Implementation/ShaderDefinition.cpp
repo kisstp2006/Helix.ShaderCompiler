@@ -69,14 +69,16 @@ namespace helix::shadercompiler
             case ElementType::I4: out = kInt; return true;
             case ElementType::U4: out = kUInt; return true;
             case ElementType::R4: out = kFloat; return true;
-            case ElementType::ValueType: break;
+            case ElementType::ValueType: case ElementType::GenericInst: break;
             default: return false;
             }
             StringView ns, name;
             if (!a.TypeName(sig.token, ns, name) || ns != kLibrary)
                 return false;
-            if (name == "Texture2D")
+            if (sig.kind == ElementType::GenericInst)
             {
+                if (!name.StartsWith("Texture2D"))
+                    return false;
                 out = Type::Scalar(BaseType::Texture2D);
                 return true;
             }

@@ -14,8 +14,10 @@ namespace Helix.ShaderOracle;
 ///
 /// File layout (little endian): u32 size, u32 caseCount, u32 offset of the kernel section, then per case: u16 name length, name, size * size RGBA8 pixels
 /// (rows top first), u32 uniformCount { u32 slot, u32 byteCount, bytes }, u32 textureCount { u32 slot, u32 width,
-/// u32 height, u32 filter, u32 address, RGBA8 pixels }, u32 keywordCount { u16 name length, name, i32 value }.
-/// Then per case: u32 bindlessTextureCount { u32 width, u32 height, u32 filter, u32 address, RGBA8 pixels }, u32
+/// u32 height, u32 filter, u32 address, u32 format, u32 byteCount, texels }, u32 keywordCount { u16 name length, name, i32 value }.
+/// Formats: 0 RGBA8 (float4 texels, rounded to 8 bits), 1 R32 float, 2 RG32 float, 3 R32 uint, 4 RG32 uint, 5 RGBA32 uint,
+/// 6 R32 int, 7 RG32 int, 8 RGBA32 int.
+/// Then per case: u32 bindlessTextureCount { the same as a texture without the slot }, u32
 /// bindlessBufferCount { u32 byteCount, bytes }, in the order of their indices. Per kernel at the end: u32
 /// bindlessBufferCount { u32 byteCount, bytes before, bytes after }.
 /// A case with [Keyword] fields is written once per combination of their values.
@@ -92,14 +94,35 @@ internal static class Program
         return System.Math.Clamp((float)depth.GetValue(result)!, 0.0f, 1.0f) <= 0.5f ? target : new float4(1.0f, 0.0f, 1.0f, 1.0f);
     }
 
-    private static void WriteTexture(BinaryWriter w, Texture2D texture, SamplerState sampler)
+    private static readonly Type[] TexelTypes =
+        { typeof(float4), typeof(float), typeof(float2), typeof(uint), typeof(uint2), typeof(uint4), typeof(int), typeof(int2), typeof(int4) };
+
+    // Any Texture2D<T>: its size, the sampler state, the format code and the texels as the GPU format holds them.
+    private static void WriteTexture(BinaryWriter w, object texture, SamplerState sampler)
     {
-        w.Write((uint)texture.Size.x);
-        w.Write((uint)texture.Size.y);
+        Type type = texture.GetType();
+        int2 size = (int2)type.GetProperty("Size")!.GetValue(texture)!;
+        Array texels = (Array)type.GetProperty("Texels")!.GetValue(texture)!;
+        Type element = type.GetGenericArguments()[0];
+        int format = Array.IndexOf(TexelTypes, element);
+        if (format < 0)
+            throw new InvalidOperationException($"no test format for {element.Name} texels");
+        w.Write((uint)size.x);
+        w.Write((uint)size.y);
         w.Write((uint)sampler.Filter);
         w.Write((uint)sampler.Address);
-        foreach (float4 pixel in texture.Pixels!)
-            WritePixel(w, pixel);
+        w.Write((uint)format);
+        if (format == 0)
+        {
+            w.Write((uint)texels.Length * 4u);
+            foreach (float4 pixel in (float4[])texels)
+                WritePixel(w, pixel);
+            return;
+        }
+        MethodInfo bytesOf = typeof(Program).GetMethod(nameof(ArrayBytes), BindingFlags.NonPublic | BindingFlags.Static)!.MakeGenericMethod(element);
+        byte[] bytes = (byte[])bytesOf.Invoke(null, new object[] { texels })!;
+        w.Write((uint)bytes.Length);
+        w.Write(bytes);
     }
 
     private static void WriteBindless(BinaryWriter w)
@@ -244,16 +267,11 @@ internal static class Program
             foreach (FieldInfo f in textures)
             {
                 int slot = f.GetCustomAttribute<TextureAttribute>()!.Slot;
-                Texture2D texture = (Texture2D)f.GetValue(null)!;
+                object texture = f.GetValue(null)!;
                 FieldInfo? samplerField = fields.FirstOrDefault(s => s.GetCustomAttribute<SamplerAttribute>()?.Slot == slot);
                 SamplerState sampler = samplerField != null ? (SamplerState)samplerField.GetValue(null)! : default;
                 w.Write((uint)slot);
-                w.Write((uint)texture.Size.x);
-                w.Write((uint)texture.Size.y);
-                w.Write((uint)sampler.Filter);
-                w.Write((uint)sampler.Address);
-                foreach (float4 pixel in texture.Pixels!)
-                    WritePixel(w, pixel);
+                WriteTexture(w, texture, sampler);
             }
 
             w.Write((uint)keywords.Length);

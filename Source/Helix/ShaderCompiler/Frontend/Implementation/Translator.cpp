@@ -28,11 +28,6 @@ namespace helix::shadercompiler
                 StringView prefix;
                 BaseType base;
             } kBases[] = {{"float", BaseType::Float}, {"int", BaseType::Int}, {"uint", BaseType::UInt}, {"bool", BaseType::Bool}};
-            if (name == "Texture2D")
-            {
-                out = Type::Scalar(BaseType::Texture2D);
-                return true;
-            }
             // A bindless resource is the index it was registered under.
             if (name == "BindlessTexture" || name == "BindlessBuffer")
             {
@@ -244,12 +239,25 @@ namespace helix::shadercompiler
                     return true;
                 }
                 case ElementType::GenericInst:
+                    if (IsTextureType(sig))
+                    {
+                        out = Type::Scalar(BaseType::Texture2D);
+                        return true;
+                    }
                     if (!IsBufferType(sig))
                         return false;
                     out = Type::Scalar(BaseType::Buffer);
                     return true;
                 default: return false;
                 }
+            }
+
+            // Texture2D<T> of the shader library.
+            bool IsTextureType(const TypeSig& sig) const
+            {
+                StringView ns, name;
+                return sig.kind == ElementType::GenericInst && sig.args.Size() == 1 && a.TypeName(sig.token, ns, name) && ns == kLibrary &&
+                       name.StartsWith("Texture2D");
             }
 
             // StructuredBuffer<T> or RWStructuredBuffer<T> of the shader library.
@@ -584,6 +592,13 @@ namespace helix::shadercompiler
                     bool byRef = false;
                     if (!ParseFieldSignature(field.signature, sig) || !MapType(sig, &mt, g.type, byRef, mt.name))
                         return Fail(mt.name, Format("resource {} has a type that shaders cannot use", field.name));
+                    if (g.type.base == BaseType::Texture2D)
+                    {
+                        // The texel type: float, int or uint, one to four components.
+                        if (sig.kind != ElementType::GenericInst || !MapType(sig.args[0], &mt, g.element, byRef, mt.name) || !g.element.IsNumeric() ||
+                            g.element.base == BaseType::Bool || g.element.IsMatrix())
+                            return Fail(mt.name, Format("texture {} must have float, int or uint texels", field.name));
+                    }
                     bool image = g.type.base == BaseType::Image;
                     if ((k.kind == GlobalKind::Storage) != (g.type.base == BaseType::Buffer || image))
                         return Fail(mt.name, Format("{}: [Storage] goes with StructuredBuffer, RWStructuredBuffer and RWTexture2D fields", field.name));
@@ -613,6 +628,44 @@ namespace helix::shadercompiler
             }
 
             // ---------------------------------------------------------------- calls
+
+            // Members of Texture2D<T>: results have the texel type of the texture. The sampler travels with the texture slot,
+            // so only coordinates and level remain of the arguments.
+            bool TextureCall(Method& mt, StringView member, Array<Item>& args)
+            {
+                const Expr& self = mt.fn.exprs[args[0].e];
+                if (self.kind != ExprKind::Global || m.globals[self.index].type.base != BaseType::Texture2D)
+                    return Fail(mt.name, "a texture must be used directly from its static field");
+                Type element = m.globals[self.index].element;
+                Expr e;
+                e.kind = ExprKind::Intrinsic;
+                e.type = element;
+                e.args.Push(args[0].e);
+                if (member == "Sample" || member == "SampleLevel")
+                {
+                    if (element.base != BaseType::Float)
+                        return Fail(mt.name, Format("{} has integer texels and cannot be sampled; use Load", m.globals[self.index].name));
+                    e.intrinsic = member == "Sample" ? Intrinsic::TextureSample : Intrinsic::TextureSampleLevel;
+                    e.args.Push(Coerce(mt, args[2].e, Type::Vector(BaseType::Float, 2)));
+                    if (args.Size() > 3)
+                        e.args.Push(Coerce(mt, args[3].e, kFloat));
+                }
+                else if (member == "Load" && args.Size() == 3)
+                {
+                    e.intrinsic = Intrinsic::TextureLoad;
+                    e.args.Push(Coerce(mt, args[1].e, Type::Vector(BaseType::Int, 2)));
+                    e.args.Push(Coerce(mt, args[2].e, kInt));
+                }
+                else if (member == "get_Size")
+                {
+                    e.intrinsic = Intrinsic::TextureSize;
+                    e.type = Type::Vector(BaseType::Int, 2);
+                }
+                else
+                    return Fail(mt.name, Format("Texture2D.{} is not available in shaders", member));
+                Push(mt, AddExpr(mt.fn, Move(e)));
+                return true;
+            }
 
             // Indexer and length of a storage buffer; an element is the Index expression of the buffer.
             bool BufferCall(Method& mt, StringView member, Array<Item>& args)
@@ -768,32 +821,6 @@ namespace helix::shadercompiler
                     Assign(mt, AddExpr(mt.fn, Move(e)), args[2].e);
                     return true;
                 }
-                if (typeName == "Texture2D")
-                {
-                    Expr e;
-                    e.kind = ExprKind::Intrinsic;
-                    e.type = result;
-                    e.args.Push(args[0].e);
-                    if (member == "Sample" || member == "SampleLevel")
-                    {
-                        // The sampler travels with the texture slot; only the coordinates (and level) remain.
-                        e.intrinsic = member == "Sample" ? Intrinsic::TextureSample : Intrinsic::TextureSampleLevel;
-                        for (usize i = 2; i < args.Size(); i++)
-                            e.args.Push(args[i].e);
-                    }
-                    else if (member == "Load")
-                    {
-                        e.intrinsic = Intrinsic::TextureLoad;
-                        e.args.Push(args[1].e);
-                        e.args.Push(args[2].e);
-                    }
-                    else if (member == "get_Size")
-                        e.intrinsic = Intrinsic::TextureSize;
-                    else
-                        return Fail(mt.name, Format("Texture2D.{} is not available in shaders", member));
-                    Push(mt, AddExpr(mt.fn, Move(e)));
-                    return true;
-                }
                 if (!LibraryType(typeName, self) || !self.IsNumeric())
                     return Fail(mt.name, Format("{}.{} is not available in shaders", typeName, member));
 
@@ -920,7 +947,7 @@ namespace helix::shadercompiler
                 }
                 MethodSig sig;
                 StringView ns, typeName, member;
-                bool user = token.Is(Table::MethodDef), buffer = false;
+                bool user = token.Is(Table::MethodDef), buffer = false, texture = false;
                 if (user)
                 {
                     MethodInfo info = a.Method(token.Row());
@@ -933,7 +960,14 @@ namespace helix::shadercompiler
                     MemberRefInfo ref = a.MemberRef(token.Row());
                     member = ref.name;
                     TypeSig spec;
-                    if (ref.parent.Is(Table::TypeSpec) && ParseTypeSpec(a.TypeSpecSignature(ref.parent.Row()), spec) && IsBufferType(spec))
+                    bool generic = ref.parent.Is(Table::TypeSpec) && ParseTypeSpec(a.TypeSpecSignature(ref.parent.Row()), spec);
+                    if (generic && IsTextureType(spec))
+                    {
+                        texture = true;
+                        if (!ParseMethodSignature(ref.signature, sig))
+                            return Fail(mt.name, "damaged method signature");
+                    }
+                    else if (generic && IsBufferType(spec))
                     {
                         buffer = true;
                         if (!ParseMethodSignature(ref.signature, sig))
@@ -955,6 +989,8 @@ namespace helix::shadercompiler
 
                 if (buffer)
                     return BufferCall(mt, member, args);
+                if (texture)
+                    return TextureCall(mt, member, args);
                 if (!user)
                 {
                     if (ns != kLibrary)

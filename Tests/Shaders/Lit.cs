@@ -28,7 +28,7 @@ public sealed class Lit : ShaderDefinition
         }
 
         [Uniform(2)] public static Draw draw;
-        [Texture(1)] public static Texture2D albedo;
+        [Texture(1)] public static Texture2D<float4> albedo;
         [Sampler(1)] public static SamplerState albedoSampler;
         [Storage(3)] public static RWStructuredBuffer<uint> counters;
 

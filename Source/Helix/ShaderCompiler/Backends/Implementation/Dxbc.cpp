@@ -1088,6 +1088,7 @@ namespace helix::shadercompiler
                     if (e.intrinsic == Intrinsic::TextureSampleLevel)
                         PutSrc(ins, arg(2), 0);
                     Finish(ins);
+                    d.count = rt.rows;
                     return result(d);
                 }
                 case Intrinsic::TextureLoad:
@@ -1104,13 +1105,14 @@ namespace helix::shadercompiler
                     zw.comps[1] = 3;
                     zw.count = 2;
                     Store(zw, Pick(arg(2), 0, 0, 0, 0, 2));
-                    Src d = NewTemp(4);
+                    Src d = NewTemp(4, IsFloat(rt));
                     Instruction ins(kLd);
                     PutDst(ins, Whole(d));
                     PutSrc(ins, coord);
                     ins.words.Push(0x00107E46u);
                     ins.words.Push(slot);
                     Finish(ins);
+                    d.count = rt.rows;
                     return result(d);
                 }
                 case Intrinsic::BufferLength:
@@ -1917,7 +1919,12 @@ namespace helix::shadercompiler
                 }
                 for (u32 slot : textures)
                 {
-                    u32 words[] = {kDclSampler | (3u << 24), 0x00106000u, slot, kDclResource | (3u << 11) | (4u << 24), 0x00107000u, slot, 0x00005555u};
+                    // The return type of every component: 5 float, 3 signed, 4 unsigned integer.
+                    u32 kind = 5;
+                    for (const Global& g : m.globals)
+                        if (g.kind == GlobalKind::Texture && g.slot == slot)
+                            kind = g.element.base == BaseType::Int ? 3u : g.element.base == BaseType::UInt ? 4u : 5u;
+                    u32 words[] = {kDclSampler | (3u << 24), 0x00106000u, slot, kDclResource | (3u << 11) | (4u << 24), 0x00107000u, slot, kind * 0x1111u};
                     body.Append(words, 7);
                 }
                 if (bindless.textures)

@@ -131,7 +131,9 @@ HX_TEST(Assembly, DecodesSignatures)
     HX_REQUIRE(field.args.Size() == 1u);
     HX_CHECK(field.args[0].kind == ElementType::U4);
     HX_REQUIRE(ParseFieldSignature(a.Field(a.FindField(forward, "albedo")).signature, field));
-    HX_CHECK(IsType(a, field, "Texture2D"));
+    HX_CHECK(field.kind == ElementType::GenericInst && IsType(a, field, "Texture2D`1"));
+    HX_REQUIRE(field.args.Size() == 1u);
+    HX_CHECK(IsType(a, field.args[0], "float4"));
 
     MethodBody body;
     HX_REQUIRE(a.Body(a.FindMethod(basics, "Loop"), body));

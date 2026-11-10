@@ -55,6 +55,15 @@ namespace
         return device.CreateShader(desc);
     }
 
+    // The texture formats of the oracle file, by code.
+    rhi::Format TestFormat(u32 code)
+    {
+        static constexpr rhi::Format kFormats[] = {rhi::Format::RGBA8Unorm, rhi::Format::R32Float,  rhi::Format::RG32Float,
+                                                   rhi::Format::R32Uint,    rhi::Format::RG32Uint,  rhi::Format::RGBA32Uint,
+                                                   rhi::Format::R32Sint,    rhi::Format::RG32Sint,  rhi::Format::RGBA32Sint};
+        return code < 9 ? kFormats[code] : rhi::Format::Unknown;
+    }
+
     ShaderHandle MakeShader(Device& device, const DxbcShader& shader, ShaderStage stage)
     {
         ShaderDesc desc;
@@ -159,10 +168,10 @@ void RunCases(Device& d, bool direct3d)
         u32 textureCount = r.U32();
         for (u32 t = 0; t < textureCount; t++)
         {
-            u32 slot = r.U32(), width = r.U32(), height = r.U32(), filter = r.U32(), address = r.U32();
-            const u8* pixels = r.Bytes(usize(width) * height * 4);
-            HX_REQUIRE(pixels != nullptr);
-            textures.Push(d.CreateTexture({.format = Format::RGBA8Unorm, .width = width, .height = height, .initialData = pixels}));
+            u32 slot = r.U32(), width = r.U32(), height = r.U32(), filter = r.U32(), address = r.U32(), format = r.U32(), bytes = r.U32();
+            const u8* texels = r.Bytes(bytes);
+            HX_REQUIRE(texels != nullptr && TestFormat(format) != rhi::Format::Unknown);
+            textures.Push(d.CreateTexture({.format = TestFormat(format), .width = width, .height = height, .initialData = texels}));
             Filter f = filter == 1 ? Filter::Linear : Filter::Nearest;
             AddressMode mode = address == 1 ? AddressMode::ClampToEdge : AddressMode::Repeat;
             samplers.Push(d.CreateSampler({.minFilter = f, .magFilter = f, .mipFilter = Filter::Nearest, .addressU = mode, .addressV = mode}));
@@ -198,9 +207,9 @@ void RunCases(Device& d, bool direct3d)
         u32 bindlessTextureCount = r.U32();
         for (u32 t = 0; t < bindlessTextureCount; t++)
         {
-            u32 width = r.U32(), height = r.U32(), filter = r.U32(), address = r.U32();
-            const u8* pixels = r.Bytes(usize(width) * height * 4);
-            HX_REQUIRE(pixels != nullptr);
+            u32 width = r.U32(), height = r.U32(), filter = r.U32(), address = r.U32(), format = r.U32(), bytes = r.U32();
+            const u8* pixels = r.Bytes(bytes);
+            HX_REQUIRE(pixels != nullptr && format == 0);
             skip = skip || !d.Caps().bindlessTextures;
             if (skip)
                 continue;

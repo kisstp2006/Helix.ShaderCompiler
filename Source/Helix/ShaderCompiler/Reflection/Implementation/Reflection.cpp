@@ -124,6 +124,7 @@ namespace helix::shadercompiler
             ReflectedResource r;
             r.name = g.name;
             r.slot = g.slot;
+            r.element = g.element;
             if (g.kind == GlobalKind::Storage)
             {
                 bool image = g.type.base == BaseType::Image;

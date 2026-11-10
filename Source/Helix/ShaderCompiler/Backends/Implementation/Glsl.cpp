@@ -206,9 +206,16 @@ namespace helix::shadercompiler
                     }
                     return true;
                 }
-                case Intrinsic::TextureSample: return call("texture");
-                case Intrinsic::TextureSampleLevel: return call("textureLod");
-                case Intrinsic::TextureLoad: return call("texelFetch");
+                case Intrinsic::TextureSample:
+                case Intrinsic::TextureSampleLevel:
+                case Intrinsic::TextureLoad:
+                {
+                    // The texture functions give four components; the texel type may have fewer.
+                    call(e.intrinsic == Intrinsic::TextureSample ? "texture" : e.intrinsic == Intrinsic::TextureSampleLevel ? "textureLod" : "texelFetch");
+                    static constexpr const char* kComponents[] = {".x", ".xy", ".xyz", ""};
+                    out.Append(kComponents[(e.type.rows - 1) & 3]);
+                    return true;
+                }
                 case Intrinsic::TextureSize:
                     out.Append("textureSize(");
                     Value(e.args[0]);
@@ -673,7 +680,10 @@ namespace helix::shadercompiler
                     }
                     else if (g.kind == GlobalKind::Texture)
                     {
-                        FormatAppend(out, "uniform sampler2D g_{};\n", g.name);
+                        // Integer texels need the integer sampler kinds, which GLSL ES has no default precision for.
+                        const char* kind = g.element.base == BaseType::Int ? "isampler2D" : g.element.base == BaseType::UInt ? "usampler2D" : "sampler2D";
+                        bool es = target == GlslTarget::Essl300 || target == GlslTarget::Essl310;
+                        FormatAppend(out, "uniform {}{} g_{};\n", es && g.element.base != BaseType::Float ? "highp " : "", kind, g.name);
                         shader.bindings.Push({Format("g_{}", g.name), GlobalKind::Texture, g.slot});
                     }
                 }

@@ -17,7 +17,7 @@ public enum GlassDetail
 public sealed class Glass : ShaderDefinition
 {
     [Property("Tint"), MainColor, HDR, Default(1.0f, 0.5f, 0.25f, 0.5f)] public float4 tint;
-    [Property("Base Map"), MainTexture, NoScaleOffset, DefaultTexture("white")] public Texture2D baseMap;
+    [Property("Base Map"), MainTexture, NoScaleOffset, DefaultTexture("white")] public Texture2D<float4> baseMap;
     [Property("Smoothness"), Range(0.0f, 1.0f), Default(0.5f)] public float smoothness;
     [Property("Layers"), HideInInspector] public int layers;
     [Property("Use Fog"), Toggle("Fog")] public float useFog;
@@ -109,8 +109,8 @@ public sealed class BadToggle : ShaderDefinition
 public sealed class Painted : ShaderDefinition
 {
     [Property("Tint"), Default(1.0f, 0.5f, 0.25f, 1.0f)] public float4 tint;
-    [Property("Base Map"), DefaultTexture("white")] public Texture2D baseMap;
-    [Property("Detail Map"), NoScaleOffset] public Texture2D detailMap;
+    [Property("Base Map"), DefaultTexture("white")] public Texture2D<float4> baseMap;
+    [Property("Detail Map"), NoScaleOffset] public Texture2D<float4> detailMap;
     [Property("Smoothness"), Range(0.0f, 1.0f), Default(0.5f)] public float smoothness;
     [Property("Layers"), Default(3.0f)] public int layers;
     [Property("Mask"), Default(7.0f)] public uint mask;
@@ -149,9 +149,9 @@ public sealed class Painted : ShaderDefinition
     [Pass("Forward")]
     public static class Forward
     {
-        [Texture(0)] public static Texture2D baseMap;
+        [Texture(0)] public static Texture2D<float4> baseMap;
         [Sampler(0)] public static SamplerState baseSampler;
-        [Texture(3)] public static Texture2D detailMap;
+        [Texture(3)] public static Texture2D<float4> detailMap;
         [Sampler(3)] public static SamplerState detailSampler;
 
         [VertexShader]
