@@ -284,7 +284,8 @@ namespace helix::shadercompiler
         }
         else
         {
-            static constexpr GlslTarget kTargets[] = {GlslTarget::Glsl330, GlslTarget::Glsl450, GlslTarget::Essl300, GlslTarget::Glsl430, GlslTarget::Essl310};
+            static constexpr GlslTarget kTargets[] = {GlslTarget::Glsl330, GlslTarget::Glsl450, GlslTarget::Essl300, GlslTarget::Glsl430,
+                                                      GlslTarget::Essl310, GlslTarget::Glsl330, GlslTarget::Essl320};
             GlslShader shader;
             if (!EmitGlsl(module, kTargets[u32(target)], shader, error))
                 return false;

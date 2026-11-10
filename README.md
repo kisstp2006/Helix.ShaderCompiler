@@ -3,8 +3,9 @@
 Shader compiler of the Helix engine. Shaders are written in C# with Helix.Shaders and compiled by the C# compiler; this
 library reads the resulting assembly and turns the shader methods into GPU code. It contains no third party code.
 
-Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50, GLSL ES 3.00 and Direct3D 11 bytecode
-(shader model 4.0); compute shaders and storage buffers compile to GLSL 4.30, GLSL ES 3.10 and shader model 5.0 bytecode.
+Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50, GLSL ES 3.00, 3.10 and 3.20 and Direct3D 11
+bytecode (shader model 4.0); compute shaders and storage buffers compile to GLSL 4.30, GLSL ES 3.10 and 3.20 and shader
+model 5.0 bytecode.
 
 ## Layout
 
@@ -368,9 +369,10 @@ cannot be indexed.
 - Execution: 17 C# shaders (arithmetic, branches, loops, `continue`, early returns from nested loops, switch, functions
   with `ref`/`out` and generics, library functions, integers, matrices, uniforms, textures, discard, bool vectors, nested
   structs) run on the CPU as C# and on the GPU as generated GLSL 3.30 and 4.50 and as Direct3D bytecode; the images must
-  agree within 2/255. They run on the OpenGL device and on every Direct3D 11 adapter the machine offers.
+  agree within 2/255. They run on the OpenGL device, on an OpenGL ES device as GLSL ES 3.00, 3.10 and 3.20 (as far as
+  the context goes; EGL on Linux, the ES profile of the driver on Windows) and on every Direct3D 11 adapter the machine
+  offers. The kernels run on the ES device as GLSL ES 3.10.
 - Direct3D container: chunks, sizes, signatures and registers of both stages, and that output is deterministic.
-- GLSL ES 3.00 output is checked as text only; it is not executed yet.
 - Compute: seven kernels (a uniform and a buffer, structs between two buffers on a 2D grid, an in place update with a
   helper that loops and returns early on a 3D grid, counters shared through atomic adds, a storage texture, bindless
   buffers, storage textures read and written in R32F, R32UI, R32I and written in RGBA16F) run on the CPU and are dispatched as GLSL 4.30 and as Direct3D

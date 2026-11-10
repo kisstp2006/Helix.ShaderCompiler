@@ -80,6 +80,20 @@ namespace
 
 // Every case of Tests/Shaders/Cases is compiled from its IL to GLSL, drawn on the GPU and compared with the image the same
 // C# code produced on the CPU.
+// The OpenGL ES profile: ESSL 3.00, 3.10 and 3.20, where the driver has one (EGL on Linux, WGL_EXT_create_context_es2_profile
+// on Windows).
+HX_TEST(Execution, EsslMatchesTheCpu)
+{
+    Device* d = Device::IsBackendAvailable(Backend::OpenGLES) ? Device::Create({.backend = Backend::OpenGLES, .vsync = false}) : nullptr;
+    if (!d)
+    {
+        std::printf("    no OpenGL ES here, skipped\n");
+        return;
+    }
+    RunCases(*d, false);
+    Device::Destroy(d);
+}
+
 HX_TEST(Execution, GlslMatchesTheCpu)
 {
     Device* d = Device::IsBackendAvailable(Backend::OpenGL) ? Device::Create({.backend = Backend::OpenGL, .vsync = false}) : nullptr;
@@ -140,9 +154,21 @@ void RunCases(Device& d, bool direct3d)
     u32 fullscreen = a.FindType("Helix.ShaderTests.Cases", "Fullscreen");
     HX_REQUIRE(fullscreen != 0);
 
-    // Desktop GLSL 3.30 always, 4.50 as well where the driver has it.
-    GlslTarget targets[2] = {GlslTarget::Glsl330, GlslTarget::Glsl450};
+    // Desktop GLSL 3.30 always, 4.50 as well where the driver has it; on OpenGL ES every ESSL version the context has.
+    bool es = d.Caps().backend == Backend::OpenGLES;
+    GlslTarget targets[3] = {GlslTarget::Glsl330, GlslTarget::Glsl450, GlslTarget::Glsl450};
     u32 targetCount = !direct3d && (d.Caps().apiMajor > 4 || (d.Caps().apiMajor == 4 && d.Caps().apiMinor >= 5)) ? 2 : 1;
+    if (es)
+    {
+        targets[0] = GlslTarget::Essl300;
+        targets[1] = GlslTarget::Essl310;
+        targets[2] = GlslTarget::Essl320;
+        targetCount = 1 + (d.Caps().apiMinor >= 1 ? 1 : 0) + (d.Caps().apiMinor >= 2 ? 1 : 0);
+    }
+    static constexpr const char* kTargetNames[] = {"GLSL 330", "GLSL 450", "ESSL 300", "GLSL 430", "ESSL 310", "ESSL 320"};
+    String targetNames = direct3d ? String("Direct3D bytecode") : String();
+    for (u32 i = 0; !direct3d && i < targetCount; i++)
+        targetNames = helix::Format("{}{}{}", targetNames, i ? ", " : "", kTargetNames[u32(targets[i])]);
     u32 fullTargetCount = targetCount, skipped = 0;
     u32 passed = 0;
     for (u32 c = 0; c < caseCount; c++)
@@ -255,6 +281,7 @@ void RunCases(Device& d, bool direct3d)
             skipped++;
             targetCount = 0;
         }
+        u32 ranTargets = 0;
         for (u32 version = 0; version < targetCount && caseOk; version++)
         {
             Module vertexModule, fragmentModule, probeModule;
@@ -276,8 +303,12 @@ void RunCases(Device& d, bool direct3d)
             Module probeVertex = vertexModule;
             compiled = compiled && LinkStages(vertexModule, fragmentModule, error);
             // Bindless textures exist from GLSL 4.50 on, with the extension.
-            if (compiled && !direct3d && targets[version] == GlslTarget::Glsl330 && FindBindless(fragmentModule).textures)
+            // Bindless textures exist from GLSL 4.50 on, with the extension, bindless buffers on desktop GLSL 4.30 and up.
+            BindlessUse bindlessUse = compiled ? FindBindless(fragmentModule) : BindlessUse();
+            if (compiled && !direct3d &&
+                ((bindlessUse.textures && targets[version] != GlslTarget::Glsl450) || (bindlessUse.buffers && (IsEssl(targets[version]) || targets[version] == GlslTarget::Glsl330))))
                 continue;
+            ranTargets++;
             if (compiled && direct3d)
                 compiled = EmitDxbc(vertexModule, vertexCode, error) && EmitDxbc(fragmentModule, fragmentCode, error) && EmitDxbc(probeModule, probeCode, error) &&
                            EmitDxbc(probeVertex, probeVertexCode, error);
@@ -438,13 +469,17 @@ void RunCases(Device& d, bool direct3d)
         for (SamplerHandle s : samplers)
             d.Destroy(s);
         targetCount = fullTargetCount;
+        if (!direct3d && !skip && caseOk && ranTargets == 0)
+        {
+            skipped++;
+            continue;
+        }
         if (skip)
             continue;
         HX_CHECK(caseOk);
         passed += caseOk ? 1 : 0;
     }
-    std::printf("    %u of %u shaders match the CPU on %s (%s)\n", passed, caseCount - skipped, d.Caps().renderer,
-                direct3d ? "Direct3D bytecode" : targetCount == 2 ? "GLSL 330 and 450" : "GLSL 330");
+    std::printf("    %u of %u shaders match the CPU on %s (%s)\n", passed, caseCount - skipped, d.Caps().renderer, targetNames.CStr());
     d.Destroy(target);
     d.Destroy(depthTarget);
     d.Destroy(vertices);

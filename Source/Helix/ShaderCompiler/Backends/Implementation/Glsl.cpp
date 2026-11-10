@@ -49,7 +49,7 @@ namespace helix::shadercompiler
             // The type of a declaration: GLSL ES computes half values at medium precision.
             String Decl(Type t) const
             {
-                bool es = target == GlslTarget::Essl300 || target == GlslTarget::Essl310;
+                bool es = IsEssl(target);
                 Type inner = t.base == BaseType::Array ? m.arrays[t.structIndex].element : t;
                 return es && inner.half ? Format("mediump {}", TypeName(t)) : TypeName(t);
             }
@@ -718,15 +718,16 @@ namespace helix::shadercompiler
                     "#version 300 es\nprecision highp float;\nprecision highp int;\n",
                     "#version 430 core\n",
                     "#version 310 es\nprecision highp float;\nprecision highp int;\n",
+                    "#version 320 es\nprecision highp float;\nprecision highp int;\n",
                 };
                 out.Append(kHeaders[u32(target)]);
-                bool modern = target == GlslTarget::Glsl430 || target == GlslTarget::Glsl450 || target == GlslTarget::Essl310;
+                bool modern = HasCompute(target);
                 if (m.stage == Stage::Compute && !modern)
                     return Fail("compute shaders need GLSL 4.30 or GLSL ES 3.10");
                 BindlessUse bindless = FindBindless(m);
                 if (bindless.textures && target != GlslTarget::Glsl450)
                     return Fail("bindless textures need GLSL 4.50 with ARB_bindless_texture");
-                if (bindless.buffers && (!modern || target == GlslTarget::Essl310))
+                if (bindless.buffers && (!modern || IsEssl(target)))
                     return Fail("bindless buffers need GLSL 4.30 or 4.50");
                 if (bindless.textures)
                     out.Append("#extension GL_ARB_bindless_texture : require\n");
@@ -773,7 +774,7 @@ namespace helix::shadercompiler
                                             : g.type.base == BaseType::Texture3D  ? "3D"
                                             : g.type.base == BaseType::TextureCube ? "Cube"
                                                                                   : "2D";
-                        bool es = target == GlslTarget::Essl300 || target == GlslTarget::Essl310;
+                        bool es = IsEssl(target);
                         bool defaulted = !g.comparison && g.element.base == BaseType::Float && (g.type.base == BaseType::Texture2D || g.type.base == BaseType::TextureCube);
                         FormatAppend(out, "uniform {}{}sampler{}{} g_{};\n", es && !defaulted ? "highp " : "", prefix, shape, g.comparison ? "Shadow" : "", g.name);
                         shader.bindings.Push({Format("g_{}", g.name), GlobalKind::Texture, g.slot});

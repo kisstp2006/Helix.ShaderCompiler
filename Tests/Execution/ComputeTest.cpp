@@ -50,6 +50,7 @@ namespace
             std::printf("    %s: no compute shaders, skipped\n", d.Caps().renderer);
             return;
         }
+        bool es = d.Caps().backend == Backend::OpenGLES;
         Assembly a;
         HX_REQUIRE(a.Load(TestShadersImage()));
         Reader r{ShaderExpectations()};
@@ -161,7 +162,7 @@ namespace
                 const u8* before = r.Bytes(bytes);
                 const u8* after = r.Bytes(bytes);
                 HX_REQUIRE(before && after);
-                skip = skip || !d.Caps().bindlessBuffers;
+                skip = skip || !d.Caps().bindlessBuffers || es;
                 if (skip)
                     continue;
                 BufferHandle buffer = d.CreateBuffer({.size = bytes, .usage = BufferStorage, .bindless = true, .initialData = before});
@@ -190,7 +191,7 @@ namespace
             options.passes.verify = true;
             // Through the cache, as the renderer compiles them; variants with the same code share an entry.
             bool ok = TranslateEntryPoint(a, a.FindMethod(type, "Run"), Stage::Compute, module, error, options) &&
-                      CompileModule(module, direct3d ? ShaderTarget::Dxbc : ShaderTarget::Glsl430, compiled, error, &cache);
+                      CompileModule(module, direct3d ? ShaderTarget::Dxbc : es ? ShaderTarget::Essl310 : ShaderTarget::Glsl430, compiled, error, &cache);
             if (!ok)
                 std::printf("    %s: %s\n", label.CStr(), error.CStr());
             // HELIX_PRINT_SHADERS=<kernel name> shows the GLSL or writes the bytecode to <kernel name>.dxbc.
@@ -257,7 +258,7 @@ namespace
                     if (wrong)
                     {
                         std::printf("    %s (%s): texture in slot %u has %u wrong bytes, the first at byte %u: GPU %u, CPU %u\n", label.CStr(),
-                                    direct3d ? "DXBC" : "GLSL 430", image.slot, wrong, first, u32(pixels[first]), u32(image.expected[first]));
+                                    direct3d ? "DXBC" : es ? "ESSL 310" : "GLSL 430", image.slot, wrong, first, u32(pixels[first]), u32(image.expected[first]));
                         ok = false;
                     }
                 }
@@ -277,7 +278,7 @@ namespace
                     if (wrong)
                     {
                         std::printf("    %s (%s): bindless buffer %u has %u wrong bytes, the first at byte %u: GPU %u, CPU %u\n", label.CStr(),
-                                    direct3d ? "DXBC" : "GLSL 430", h.index, wrong, first, u32(bytes[first]), u32(h.expected[first]));
+                                    direct3d ? "DXBC" : es ? "ESSL 310" : "GLSL 430", h.index, wrong, first, u32(bytes[first]), u32(h.expected[first]));
                         ok = false;
                     }
                 }
@@ -299,7 +300,7 @@ namespace
                     if (wrong)
                     {
                         std::printf("    %s (%s): buffer in slot %u has %u wrong bytes, the first at byte %u: GPU %u, CPU %u\n", label.CStr(),
-                                    direct3d ? "DXBC" : "GLSL 430", b.slot, wrong, first, u32(bytes[first]), u32(b.expected[first]));
+                                    direct3d ? "DXBC" : es ? "ESSL 310" : "GLSL 430", b.slot, wrong, first, u32(bytes[first]), u32(b.expected[first]));
                         ok = false;
                     }
                 }
@@ -318,8 +319,21 @@ namespace
             HX_CHECK(ok);
             passed += ok ? 1 : 0;
         }
-        std::printf("    %u of %u kernels match the CPU on %s (%s)\n", passed, kernelCount - skipped, d.Caps().renderer, direct3d ? "Direct3D bytecode" : "GLSL 430");
+        std::printf("    %u of %u kernels match the CPU on %s (%s)\n", passed, kernelCount - skipped, d.Caps().renderer, direct3d ? "Direct3D bytecode" : es ? "ESSL 310" : "GLSL 430");
     }
+}
+
+// ESSL 3.10 on an OpenGL ES 3.1 or 3.2 context, where the driver has one.
+HX_TEST(Compute, EsslMatchesTheCpu)
+{
+    Device* d = Device::IsBackendAvailable(Backend::OpenGLES) ? Device::Create({.backend = Backend::OpenGLES, .debug = std::getenv("HELIX_GL_DEBUG") != nullptr, .vsync = false}) : nullptr;
+    if (!d)
+    {
+        std::printf("    no OpenGL ES here, skipped\n");
+        return;
+    }
+    RunKernels(*d, false);
+    Device::Destroy(d);
 }
 
 HX_TEST(Compute, GlslMatchesTheCpu)

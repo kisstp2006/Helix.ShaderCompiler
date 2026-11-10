@@ -11,7 +11,12 @@ namespace helix::shadercompiler
         Essl300, // OpenGL ES 3.0 and WebGL 2
         Glsl430, // desktop OpenGL 4.3 core, the first with compute shaders and storage buffers
         Essl310, // OpenGL ES 3.1, the first with compute shaders and storage buffers
+        Essl320, // OpenGL ES 3.2
     };
+
+    constexpr bool IsEssl(GlslTarget t) { return t == GlslTarget::Essl300 || t == GlslTarget::Essl310 || t == GlslTarget::Essl320; }
+    // Compute shaders, storage buffers and storage textures.
+    constexpr bool HasCompute(GlslTarget t) { return t == GlslTarget::Glsl430 || t == GlslTarget::Glsl450 || t == GlslTarget::Essl310 || t == GlslTarget::Essl320; }
 
     // A name in the generated source and the slot the shader author gave it; the renderer binds by these.
     struct GlslBinding

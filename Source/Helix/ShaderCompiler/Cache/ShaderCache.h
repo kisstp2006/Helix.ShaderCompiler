@@ -18,6 +18,7 @@ namespace helix::shadercompiler
         Glsl430,
         Essl310,
         Dxbc,
+        Essl320,
     };
 
     // One compiled shader: GLSL text or a Direct3D bytecode container.
