@@ -1,6 +1,8 @@
 #include <Support/TestAssemblies.h>
 
+#include <Helix/Core/Strings/Format.h>
 #include <Helix/RHI/Device/Device.h>
+#include <Helix/ShaderCompiler/Backends/Dxbc.h>
 #include <Helix/ShaderCompiler/Backends/Glsl.h>
 #include <Helix/ShaderCompiler/Frontend/Frontend.h>
 #include <Helix/Testing/Test.h>
@@ -51,24 +53,65 @@ namespace
         desc.bindingCount = u32(bindings.Size());
         return device.CreateShader(desc);
     }
+
+    ShaderHandle MakeShader(Device& device, const DxbcShader& shader, ShaderStage stage)
+    {
+        ShaderDesc desc;
+        desc.stage = stage;
+        desc.bytecode = shader.bytes.Data();
+        desc.bytecodeSize = shader.bytes.Size();
+        return device.CreateShader(desc);
+    }
+
+    void RunCases(Device& d, bool direct3d);
 }
 
 // Every case of Tests/Shaders/Cases is compiled from its IL to GLSL, drawn on the GPU and compared with the image the same
 // C# code produced on the CPU.
-HX_TEST(Execution, CompiledShadersMatchTheCpu)
+HX_TEST(Execution, GlslMatchesTheCpu)
 {
-    if (!Device::IsBackendAvailable(Backend::OpenGL))
+    Device* d = Device::IsBackendAvailable(Backend::OpenGL) ? Device::Create({.backend = Backend::OpenGL, .vsync = false}) : nullptr;
+    if (!d)
     {
         std::printf("    no OpenGL here, skipped\n");
         return;
     }
-    Device* created = Device::Create({.backend = Backend::OpenGL, .vsync = false});
-    if (!created)
+    RunCases(*d, false);
+    Device::Destroy(d);
+}
+
+// The same through the Direct3D bytecode backend, on every adapter of the machine.
+HX_TEST(Execution, DxbcMatchesTheCpu)
+{
+    if (!Device::IsBackendAvailable(Backend::D3D11))
     {
-        std::printf("    OpenGL device creation failed, skipped\n");
+        std::printf("    no Direct3D 11 here, skipped\n");
         return;
     }
-    Device& d = *created;
+    char name[128];
+    u32 ran = 0;
+    for (u32 adapter = 0; Device::AdapterName(Backend::D3D11, adapter, name, sizeof(name)); adapter++)
+    {
+        Device* d = Device::Create({.backend = Backend::D3D11, .adapter = i32(adapter), .vsync = false});
+        if (!d)
+            continue;
+        RunCases(*d, true);
+        Device::Destroy(d);
+        ran++;
+    }
+    if (!ran)
+    {
+        Device* d = Device::Create({.backend = Backend::D3D11, .vsync = false});
+        HX_REQUIRE(d != nullptr);
+        RunCases(*d, true);
+        Device::Destroy(d);
+    }
+}
+
+namespace
+{
+void RunCases(Device& d, bool direct3d)
+{
     Assembly a;
     HX_REQUIRE(a.Load(TestShadersImage()));
 
@@ -84,7 +127,7 @@ HX_TEST(Execution, CompiledShadersMatchTheCpu)
 
     // Desktop GLSL 3.30 always, 4.50 as well where the driver has it.
     GlslTarget targets[2] = {GlslTarget::Glsl330, GlslTarget::Glsl450};
-    u32 targetCount = d.Caps().apiMajor > 4 || (d.Caps().apiMajor == 4 && d.Caps().apiMinor >= 5) ? 2 : 1;
+    u32 targetCount = !direct3d && (d.Caps().apiMajor > 4 || (d.Caps().apiMajor == 4 && d.Caps().apiMinor >= 5)) ? 2 : 1;
     u32 passed = 0;
     for (u32 c = 0; c < caseCount; c++)
     {
@@ -129,23 +172,42 @@ HX_TEST(Execution, CompiledShadersMatchTheCpu)
         {
             Module vertexModule, fragmentModule;
             GlslShader vertexShader, fragmentShader;
+            DxbcShader vertexCode, fragmentCode;
             String error;
             bool compiled = TranslateEntryPoint(a, a.FindMethod(fullscreen, "Vertex"), Stage::Vertex, vertexModule, error) &&
-                            EmitGlsl(vertexModule, targets[version], vertexShader, error) &&
-                            TranslateEntryPoint(a, a.FindMethod(type, "Fragment"), Stage::Fragment, fragmentModule, error) &&
-                            EmitGlsl(fragmentModule, targets[version], fragmentShader, error);
+                            TranslateEntryPoint(a, a.FindMethod(type, "Fragment"), Stage::Fragment, fragmentModule, error);
+            if (compiled && direct3d)
+                compiled = EmitDxbc(vertexModule, vertexCode, error) && EmitDxbc(fragmentModule, fragmentCode, error);
+            else if (compiled)
+                compiled = EmitGlsl(vertexModule, targets[version], vertexShader, error) && EmitGlsl(fragmentModule, targets[version], fragmentShader, error);
             if (!compiled)
             {
                 std::printf("    %s: %s\n", name.CStr(), error.CStr());
                 caseOk = false;
                 break;
             }
-            // HELIX_PRINT_SHADERS=<case name> shows the generated fragment shader of one case.
+            // HELIX_PRINT_SHADERS=<case name> shows the generated fragment shader of one case; bytecode goes to <case>.dxbc
+            // and Fullscreen.dxbc in the working directory.
             const char* print = std::getenv("HELIX_PRINT_SHADERS");
             if (print && name == StringView(print) && version == 0)
-                std::printf("%s\n", fragmentShader.source.CStr());
-            ShaderHandle vs = MakeShader(d, vertexShader, ShaderStage::Vertex);
-            ShaderHandle fs = MakeShader(d, fragmentShader, ShaderStage::Fragment);
+            {
+                if (direct3d)
+                {
+                    String path = helix::Format("{}.dxbc", name);
+                    const DxbcShader* dumps[] = {&fragmentCode, &vertexCode};
+                    const char* paths[] = {path.CStr(), "Fullscreen.dxbc"};
+                    for (int i = 0; i < 2; i++)
+                        if (std::FILE* f = std::fopen(paths[i], "wb"))
+                        {
+                            std::fwrite(dumps[i]->bytes.Data(), 1, dumps[i]->bytes.Size(), f);
+                            std::fclose(f);
+                        }
+                }
+                else
+                    std::printf("%s\n", fragmentShader.source.CStr());
+            }
+            ShaderHandle vs = direct3d ? MakeShader(d, vertexCode, ShaderStage::Vertex) : MakeShader(d, vertexShader, ShaderStage::Vertex);
+            ShaderHandle fs = direct3d ? MakeShader(d, fragmentCode, ShaderStage::Fragment) : MakeShader(d, fragmentShader, ShaderStage::Fragment);
             PipelineDesc pd;
             pd.vertexShader = vs;
             pd.fragmentShader = fs;
@@ -156,7 +218,7 @@ HX_TEST(Execution, CompiledShadersMatchTheCpu)
             PipelineHandle pipeline = vs.IsValid() && fs.IsValid() ? d.CreatePipeline(pd) : PipelineHandle{};
             if (!pipeline.IsValid())
             {
-                std::printf("    %s: the generated GLSL was rejected by the driver:\n%s\n", name.CStr(), fragmentShader.source.CStr());
+                std::printf("    %s: the generated shader was rejected by the driver:\n%s\n", name.CStr(), fragmentShader.source.CStr());
                 caseOk = false;
             }
             else
@@ -193,7 +255,7 @@ HX_TEST(Execution, CompiledShadersMatchTheCpu)
                 {
                     u32 p = firstWrong / 4;
                     std::printf("    %s (%s): %u channels differ, worst by %u; first at pixel (%u, %u) channel %u: GPU %u, CPU %u\n", name.CStr(),
-                                version ? "GLSL 450" : "GLSL 330", wrong, worst, p % size, p / size, firstWrong % 4, u32(pixels[firstWrong]),
+                                direct3d ? "DXBC" : version ? "GLSL 450" : "GLSL 330", wrong, worst, p % size, p / size, firstWrong % 4, u32(pixels[firstWrong]),
                                 u32(expected[firstWrong]));
                     std::printf("%s\n", fragmentShader.source.CStr());
                     caseOk = false;
@@ -210,8 +272,9 @@ HX_TEST(Execution, CompiledShadersMatchTheCpu)
         HX_CHECK(caseOk);
         passed += caseOk ? 1 : 0;
     }
-    std::printf("    %u of %u shaders match the CPU on %s (%u GLSL versions)\n", passed, caseCount, d.Caps().renderer, targetCount);
+    std::printf("    %u of %u shaders match the CPU on %s (%s)\n", passed, caseCount, d.Caps().renderer,
+                direct3d ? "Direct3D bytecode" : targetCount == 2 ? "GLSL 330 and 450" : "GLSL 330");
     d.Destroy(target);
     d.Destroy(vertices);
-    Device::Destroy(created);
+}
 }

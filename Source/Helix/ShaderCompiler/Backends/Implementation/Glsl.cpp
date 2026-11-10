@@ -1,4 +1,5 @@
 #include <Helix/ShaderCompiler/Backends/Glsl.h>
+#include <Helix/ShaderCompiler/Backends/Implementation/UniformLayout.h>
 
 #include <Helix/Core/Strings/Format.h>
 
@@ -419,67 +420,6 @@ namespace helix::shadercompiler
                 out.Append("}\n\n");
             }
 
-            // ---------------------------------------------------------------- uniform layout
-
-            struct Layout
-            {
-                u32 align, size;
-            };
-
-            Layout Std140(Type t) const
-            {
-                if (t.base == BaseType::Struct)
-                {
-                    u32 offset = 0, align = 16;
-                    for (const StructField& f : m.structs[t.structIndex].fields)
-                    {
-                        Layout l = Std140(f.type);
-                        offset = u32(AlignUp(offset, l.align)) + l.size;
-                        align = Max(align, l.align);
-                    }
-                    return {align, u32(AlignUp(offset, align))};
-                }
-                if (t.IsMatrix())
-                    return {16, 16u * t.cols};
-                if (t.rows == 1)
-                    return {4, 4};
-                return {t.rows == 2 ? 8u : 16u, 4u * t.rows};
-            }
-
-            u32 SequentialSize(Type t) const
-            {
-                if (t.base != BaseType::Struct)
-                    return 4u * t.rows * t.cols;
-                u32 size = 0;
-                for (const StructField& f : m.structs[t.structIndex].fields)
-                    size += SequentialSize(f.type);
-                return size;
-            }
-
-            // The C# struct is copied to the GPU as it is, so every field must sit where std140 expects it.
-            bool CheckLayout(Type t, StringView path, u32 std140, u32 sequential)
-            {
-                for (const StructField& f : m.structs[t.structIndex].fields)
-                {
-                    String name = Format("{}.{}", path, f.name);
-                    if (f.type.base == BaseType::Bool)
-                        return Fail(Format("uniform field {} is a bool; use an int or uint, bools have no fixed layout", name));
-                    Layout l = Std140(f.type);
-                    std140 = u32(AlignUp(std140, l.align));
-                    if (f.type.IsMatrix() && f.type.cols != 4)
-                        return Fail(Format("uniform field {} is a {}x{} matrix, which GLSL stores with padded columns; use float4x4", name, u32(f.type.cols),
-                                           u32(f.type.cols)));
-                    if (std140 != sequential)
-                        return Fail(Format("uniform field {} is at byte {} in C# but at byte {} on the GPU; reorder the fields or add padding before it",
-                                           name, sequential, std140));
-                    if (f.type.base == BaseType::Struct && !CheckLayout(f.type, name, std140, sequential))
-                        return false;
-                    std140 += l.size;
-                    sequential += SequentialSize(f.type);
-                }
-                return true;
-            }
-
             // ---------------------------------------------------------------- stage interface
 
             // Global declaration (when needed) and the GLSL expression of one stage input or output.
@@ -615,7 +555,7 @@ namespace helix::shadercompiler
                     {
                         if (g.type.base != BaseType::Struct)
                             return Fail(Format("uniform {} must be a struct", g.name));
-                        if (!CheckLayout(g.type, g.name, 0, 0))
+                        if (!CheckUniformLayout(m, g.type, g.name, 0, 0, error))
                             return false;
                         FormatAppend(out, "layout(std140) uniform hx_block_{}\n{{\n    {} g_{};\n}};\n", g.name, TypeName(g.type), g.name);
                         shader.bindings.Push({Format("hx_block_{}", g.name), GlobalKind::Uniform, g.slot});

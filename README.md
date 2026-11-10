@@ -3,7 +3,8 @@
 Shader compiler of the Helix engine. Shaders are written in C# with Helix.Shaders and compiled by the C# compiler; this
 library reads the resulting assembly and turns the shader methods into GPU code. It contains no third party code.
 
-Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50 and GLSL ES 3.00.
+Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50, GLSL ES 3.00 and Direct3D 11 bytecode
+(shader model 4.0).
 
 ## Layout
 
@@ -12,7 +13,7 @@ Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50 and G
 | `Source/Helix/ShaderCompiler/Assembly/` | `Assembly` (PE file, CLI metadata, method bodies, custom attributes), signatures, IL instruction decoder |
 | `Source/Helix/ShaderCompiler/IR/` | The module a shader is translated to: types, structs, expressions, structured statements, functions, resources |
 | `Source/Helix/ShaderCompiler/Frontend/` | `TranslateEntryPoint`: IL of an entry point and everything it calls to a module |
-| `Source/Helix/ShaderCompiler/Backends/` | `EmitGlsl`: a module to GLSL source with its binding table |
+| `Source/Helix/ShaderCompiler/Backends/` | `EmitGlsl`: a module to GLSL source with its binding table; `EmitDxbc`: a module to a Direct3D bytecode container |
 | `Tests/Shaders/` | C# test shaders, built with the .NET SDK during the CMake build and embedded into the test program |
 | `Tests/Oracle/` | C# program that runs the test shaders on the CPU and writes the images the GPU must reproduce |
 | `Tests/Execution/` | Compiles every case, draws it through Helix.RHI and compares it with the CPU image |
@@ -33,6 +34,10 @@ if (!TranslateEntryPoint(assembly, assembly.FindMethod(type, "Fragment"), Stage:
     !EmitGlsl(module, GlslTarget::Glsl330, shader, error))
     Report(error);
 // shader.source is the GLSL text, shader.bindings maps the names in it to the slots given in C#.
+
+DxbcShader code;
+EmitDxbc(module, code, error);
+// code.bytes goes to ID3D11Device::CreatePixelShader as it is.
 ```
 
 The C# method
@@ -76,6 +81,9 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
 3. The branches of the IL form a control flow graph. Short circuit conditions are merged back into `&&` and `||`, loops are
    found from back edges, and the graph is written as `if`, `while`, `break`, `continue` and `return`.
 4. The backend prints the module as GLSL and checks that every uniform struct has the same layout in C# and in std140.
+   The Direct3D backend writes instructions for a register machine instead: every variable gets registers, expressions
+   are evaluated into temporaries, calls are copied into the caller (a `return` becomes a `break` out of a loop that runs
+   once), and the result is wrapped in a container with its signatures and checksum.
 
 ## What shader code may use
 
@@ -101,16 +109,34 @@ Keywords are always off for now; variants are not selected yet.
 | `[Uniform(slot)] static T name` | `layout(std140) uniform hx_block_name { T g_name; }` |
 | `[Texture(slot)] static Texture2D name` | `uniform sampler2D g_name`; the sampler state travels with the slot |
 
+## Conventions of the generated Direct3D bytecode
+
+| C# | Direct3D |
+|---|---|
+| vertex input `[Location(n)]` | `TEXCOORD<n>`, register n |
+| value from vertex to fragment `[Location(n)]` | `TEXCOORD<n>`, register n + 1; integers and `Flat` are not interpolated |
+| fragment output `[Target(n)]` | `SV_Target<n>` |
+| `[Position]` | `SV_Position`, register 0 |
+| `[VertexId]`, `[InstanceId]` | `SV_VertexID`, `SV_InstanceID` |
+| `[Uniform(slot)] static T name` | constant buffer `b<slot>` |
+| `[Texture(slot)] static Texture2D name` | texture `t<slot>` with sampler `s<slot>` |
+
+Not written yet for Direct3D: front facing input, depth output, writing a vector or matrix element with a computed index.
+`asin`, `acos` and `atan` are polynomial approximations (error below 0.001), since the bytecode has no such instructions.
+
 ## Tests
 
 - Assembly reader: tables, signatures, instructions and attributes of real assemblies, and 400 randomly damaged files.
-- Execution: 14 C# shaders (arithmetic, branches, loops, switch, functions with `ref`/`out` and generics, library functions,
-  integers, matrices, uniforms, textures, discard, bool vectors, nested structs) run on the CPU as C# and on the GPU as
-  generated GLSL 3.30 and 4.50; the images must agree within 2/255. They run on every OpenGL device the machine offers.
+- Execution: 16 C# shaders (arithmetic, branches, loops, `continue`, early returns from nested loops, switch, functions
+  with `ref`/`out` and generics, library functions, integers, matrices, uniforms, textures, discard, bool vectors, nested
+  structs) run on the CPU as C# and on the GPU as generated GLSL 3.30 and 4.50 and as Direct3D bytecode; the images must
+  agree within 2/255. They run on the OpenGL device and on every Direct3D 11 adapter the machine offers.
+- Direct3D container: chunks, sizes, signatures and registers of both stages, and that output is deterministic.
 - GLSL ES 3.00 output is checked as text only; it is not executed yet.
 - Rejected shaders: recursion, a uniform struct whose layout differs between C# and std140, a missing stage attribute.
 
-`HELIX_PRINT_SHADERS=<case name>` prints the generated fragment shader of one execution case.
+`HELIX_PRINT_SHADERS=<case name>` prints the generated fragment shader of one execution case and writes its bytecode to
+`<case name>.dxbc` in the working directory.
 
 ## Build
 

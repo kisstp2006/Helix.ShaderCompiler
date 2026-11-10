@@ -112,6 +112,70 @@ public static class Loops
     }
 }
 
+public static class Continues
+{
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        float sum = 0.0f;
+        int i = 0;
+        while (i < 8)
+        {
+            i++;
+            if ((i & 1) == 0)
+                continue;
+            sum += uv.x;
+            for (int j = 0; j < 3; j++)
+            {
+                if (j == 1 && uv.y > 0.5f)
+                    continue;
+                sum += 0.125f;
+            }
+            if (sum > 2.0f)
+                continue;
+            sum += 0.25f;
+        }
+        return new float4(sum / 8.0f, i / 8.0f, 0.0f, 1.0f);
+    }
+}
+
+public static class EarlyReturns
+{
+    static int FirstAbove(float limit, float step)
+    {
+        float t = 0.0f;
+        for (int i = 0; i < 16; i++)
+        {
+            for (int j = 0; j < 2; j++)
+            {
+                t += step;
+                if (t > limit)
+                    return i;
+            }
+        }
+        return 16;
+    }
+
+    static float Pick(float2 uv)
+    {
+        if (uv.x < 0.25f)
+            return 0.1f;
+        if (uv.y < 0.5f)
+            return uv.x;
+        return uv.y * 0.5f;
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        int a = FirstAbove(uv.x * 2.0f, 0.1f);
+        int b = FirstAbove(0.5f, uv.y * 0.2f + 0.01f);
+        return new float4(a / 16.0f, b / 16.0f, Pick(uv), 1.0f);
+    }
+}
+
 public static class Switches
 {
     [FragmentShader]
