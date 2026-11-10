@@ -145,6 +145,9 @@ namespace helix::shadercompiler
                 Array<i32> argParam;
                 Array<i32> argDelegate;
                 Array<DelegateInfo> delegates;
+                // Per parameter: something writes it. A ref parameter (also this) that nothing writes is passed by value,
+                // so readonly members can be called on uniforms.
+                Array<u8> written;
                 Array<Instruction> code;
                 Array<i32> blockOfOffset;
                 Array<FlowBlock> blocks;
@@ -640,8 +643,27 @@ namespace helix::shadercompiler
                         Spill(mt, item);
             }
 
+            static void MarkWritten(Method& mt, ExprId place)
+            {
+                while (place)
+                {
+                    const Expr& e = mt.fn.exprs[place];
+                    if (e.kind == ExprKind::Param)
+                    {
+                        if (e.index >= mt.written.Size())
+                            mt.written.Resize(e.index + 1, u8(0));
+                        mt.written[e.index] = 1;
+                        return;
+                    }
+                    if (e.kind != ExprKind::Field && e.kind != ExprKind::Swizzle && e.kind != ExprKind::Index)
+                        return;
+                    place = e.a;
+                }
+            }
+
             static void Assign(Method& mt, ExprId target, ExprId value)
             {
+                MarkWritten(mt, target);
                 Flush(mt);
                 Stmt& s = mt.stmts->Emplace();
                 s.kind = StmtKind::Assign;
@@ -901,6 +923,10 @@ namespace helix::shadercompiler
                     out = {Leaf(mt, ExprKind::Global, u32(m.globals.Size() - 1), m.globals.Back().type), true};
                     return true;
                 }
+                if (field.name.StartsWith("<") && field.name.EndsWith(">k__BackingField"))
+                    return Fail(mt.name, Format("static property {} keeps its value in a static field, which shaders do not have; use a computed "
+                                                "property (=> value) or a constant",
+                                                field.name.Substr(1, field.name.Size() - 17)));
                 return Fail(mt.name, Format("static field {} is not a resource: mark it [Uniform], [Texture], [Sampler], [Storage] or [Keyword]", field.name));
             }
 
@@ -1441,6 +1467,8 @@ namespace helix::shadercompiler
                         return Fail(mt.name, "the arguments of a call do not match its parameters");
                     ParamMode mode = callee.params[p].mode;
                     writes = writes || mode != ParamMode::In;
+                    if (mode != ParamMode::In)
+                        MarkWritten(mt, value);
                     e.args.Push(mode == ParamMode::In ? Coerce(mt, value, callee.params[p].type) : value);
                     p++;
                 }
@@ -2112,6 +2140,9 @@ namespace helix::shadercompiler
                 String flowError;
                 if (!StructureFlow(mt.blocks, mt.fn, mt.fn.body, flowError))
                     return Fail(mt.name, flowError);
+                for (usize p = 0; p < mt.fn.params.Size(); p++)
+                    if (mt.fn.params[p].mode == ParamMode::InOut && (p >= mt.written.Size() || !mt.written[p]))
+                        mt.fn.params[p].mode = ParamMode::In;
                 out = Move(mt.fn);
                 return true;
             }

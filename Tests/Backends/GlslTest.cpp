@@ -202,6 +202,10 @@ HX_TEST(Glsl, EmitsComputeShadersWithStorageBuffers)
     std::printf("    %s\n", error.CStr());
     HX_CHECK(StringView(error).Contains("two scopes"));
 
+    HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(rejected, "StaticAutoProperty"), Stage::Fragment, module, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("static property Gain") && StringView(error).Contains("computed property"));
+
     // Local functions and their closure struct get names that are valid GLSL identifiers.
     u32 locals = a.FindType("Helix.ShaderTests.Cases", "LocalFunctions");
     HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(locals, "Fragment"), Stage::Fragment, module, error) &&

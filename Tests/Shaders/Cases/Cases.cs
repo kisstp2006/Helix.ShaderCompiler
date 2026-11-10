@@ -936,3 +936,60 @@ public static class Lambdas
         return new float4(r, g, b, a);
     }
 }
+
+/// <summary>Properties of user structs: auto properties with get, set and init, computed ones, an expression bodied
+/// method, a readonly struct, an object initializer and computed static properties.</summary>
+public static class Properties
+{
+    public struct Tint
+    {
+        private float strength;
+
+        public float3 Color { get; set; }
+        public float Bias { get; init; }
+
+        public float Strength
+        {
+            readonly get => strength;
+            set => strength = Saturate(value);
+        }
+
+        public readonly float3 Applied => Color * Strength + Bias;
+
+        public readonly float Luma() => Dot(Applied, new float3(0.25f, 0.5f, 0.25f));
+    }
+
+    public readonly struct Range
+    {
+        public float Low { get; init; }
+        public float High { get; init; }
+        public float Width => High - Low;
+    }
+
+    public struct Surface
+    {
+        public float4 tint;
+
+        public readonly float4 Tint => tint;
+        public readonly float Alpha => tint.w * 0.5f;
+    }
+
+    [Uniform(0)] public static Surface surface;
+
+    public static void Setup() => surface.tint = new float4(0.25f, 0.5f, 0.75f, 1.0f);
+
+    private static float Half => 0.5f;
+
+    private static float3 Ambient => new float3(0.0625f);
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        Tint t = new Tint { Color = new float3(uv, 0.25f), Bias = 0.125f * Half };
+        t.Strength = uv.x * 2.0f;
+        Range r = new Range { Low = 0.25f, High = 0.25f + uv.y * 0.5f };
+        float3 c = t.Applied * 0.5f + Ambient;
+        return new float4(c.x + surface.Tint.x * 0.25f, c.y, r.Width, t.Luma() * 0.5f + surface.Alpha * 0.25f);
+    }
+}

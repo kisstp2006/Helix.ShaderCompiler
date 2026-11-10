@@ -90,6 +90,12 @@ public static class Rejected
         return new float4(w.values[0]);
     }
 
+    private static float Gain { get; set; } = 0.5f;
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 StaticAutoProperty([Location(0)] float2 uv) => new float4(uv * Gain, 0.0f, 1.0f);
+
     [FragmentShader]
     [return: Target(0)]
     public static float4 PicksLambda([Location(0)] float2 uv)
