@@ -14,6 +14,8 @@ Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50, GLSL
 | `Source/Helix/ShaderCompiler/IR/` | The module a shader is translated to: types, structs, expressions, structured statements, functions, resources |
 | `Source/Helix/ShaderCompiler/Frontend/` | `TranslateEntryPoint`: IL of an entry point and everything it calls to a module |
 | `Source/Helix/ShaderCompiler/Definition/` | `ReadShaderDefinitions`: shaders, material properties, keywords, passes and render state declared in an assembly |
+| `Source/Helix/ShaderCompiler/Variants/` | `EnumerateVariants`: the keyword combinations a pass has to be compiled for |
+| `Source/Helix/ShaderCompiler/Cache/` | `CompileModule` and `ShaderCache`: one entry point for all targets, results kept by content in memory and on disk |
 | `Source/Helix/ShaderCompiler/Transforms/` | `Simplify`: constant folding, constant locals, removal of code, functions and resources that cannot be reached |
 | `Source/Helix/ShaderCompiler/Backends/` | `EmitGlsl`: a module to GLSL source with its binding table; `EmitDxbc`: a module to a Direct3D bytecode container |
 | `Tests/Shaders/` | C# test shaders, built with the .NET SDK during the CMake build and embedded into the test program |
@@ -64,6 +66,37 @@ range, default value or default texture, flags such as main texture or HDR, the 
 their render state and entry point methods. Declarations that cannot work are errors naming the shader and the member: a
 property type materials cannot hold, a pass without both entry points, a toggle naming a keyword the shader does not have,
 a name used twice.
+
+## Variants and the cache
+
+```cpp
+const i64 inUse[] = {2};
+const KeywordSelection used[] = {{"Quality", inUse}};
+VariantSet set;
+EnumerateVariants(assembly, shader, *pass, used, set, error);
+
+ShaderCache cache("Library/ShaderCache");
+Array<KeywordValue> keywords;
+for (usize v = 0; v < set.variants.Size(); v++)
+{
+    set.Values(v, keywords);
+    TranslateOptions options;
+    options.keywords = keywords;
+    TranslateEntryPoint(assembly, pass->fragment, Stage::Fragment, module, error, options);
+    CompileModule(module, ShaderTarget::Dxbc, compiled, error, &cache);
+}
+```
+
+`EnumerateVariants` lists every combination of the values of the keywords the code of a pass reads; keywords it never
+reads make no variants. A plain keyword takes all its values, a shader feature only its off value and the values
+materials use (`used`), so unused variants are never built. More variants than the limit (4096 by default) is an error.
+
+`CompileModule` runs the backend of a target and returns GLSL text or bytecode in one `CompiledShader`. With a
+`ShaderCache` nothing is compiled twice: the key is a hash of the translated module, the target and
+`kShaderCompilerVersion`. Because the module holds only the code a variant reaches, variants that end up with the same
+code share one entry, and after the assembly is rebuilt only shaders whose reachable code changed are compiled again.
+With a directory the cache keeps one file per shader (`<key>.hxsc`), written under a temporary name first; files that
+are damaged or from another compiler version count as missing. A cache object is not thread safe.
 
 ## Compute shaders and storage buffers
 
@@ -216,6 +249,9 @@ Not written yet for Direct3D: front facing input, depth output, writing a vector
 - Compute: five kernels (a uniform and a buffer, structs between two buffers on a 2D grid, an in place update with a
   helper that loops and returns early on a 3D grid, counters shared through atomic adds, a storage texture) run on the CPU and are dispatched as GLSL 4.30 and as Direct3D
   bytecode on every adapter; the buffers must be the same byte by byte, texels within the last bit.
+- Variants and cache: the variants of passes with plain and shader feature keywords, wrong values and the limit; six
+  variants compile four distinct shaders through the cache; a cache directory survives a restart, and a flipped byte
+  or a cut off file is detected and replaced.
 - Keywords: a case with a bool and an enum keyword runs in all six combinations on the CPU and the GPU; the text tests
   check that the code, the helper function and the texture of other variants are gone.
 - Definitions: a shader using every declarative feature is read back field by field, a pass of it is compiled with
