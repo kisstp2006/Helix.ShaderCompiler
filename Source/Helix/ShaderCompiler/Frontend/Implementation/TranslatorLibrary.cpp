@@ -209,6 +209,8 @@ namespace helix::shadercompiler::frontend
                 unknown = true;
                 return false;
             }
+            if (args.Size() - first != IntrinsicArity(e.intrinsic))
+                return Fail(mt.name, Format("ShaderMath.{} takes {} arguments, the call has {}", member, IntrinsicArity(e.intrinsic), args.Size() - first));
             if (e.intrinsic == Intrinsic::InterlockedAdd)
             {
                 if (ResourceOf(mt, args[0].e, "buffer", [](const Global& g) { return g.kind == GlobalKind::Storage; }) < 0)

@@ -95,11 +95,18 @@ namespace helix::shadercompiler
                 case ExprKind::Unary: case ExprKind::Cast:
                     if (!e.a)
                         return Fail("an operation without an operand");
+                    if (!a.IsNumeric() && !a.IsMatrix())
+                        return Fail("an operation on a value that is not a number, vector or matrix");
                     break;
                 case ExprKind::Binary:
+                {
                     if (!e.a || !e.b)
                         return Fail("a binary operation without both operands");
+                    Type b = f->exprs[e.b].type;
+                    if ((!a.IsNumeric() && !a.IsMatrix()) || (!b.IsNumeric() && !b.IsMatrix()))
+                        return Fail("an operation on a value that is not a number, vector or matrix");
                     break;
+                }
                 case ExprKind::Call:
                 {
                     if (e.index >= self)
@@ -115,6 +122,8 @@ namespace helix::shadercompiler
                 case ExprKind::Intrinsic:
                     if (e.intrinsic >= Intrinsic::Count)
                         return Fail("an unknown intrinsic");
+                    if (e.args.Size() != IntrinsicArity(e.intrinsic))
+                        return Fail(Format("{} takes {} arguments and gets {}", IntrinsicName(e.intrinsic), IntrinsicArity(e.intrinsic), e.args.Size()));
                     break;
                 default: break;
                 }

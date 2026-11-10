@@ -13,6 +13,22 @@ namespace helix::shadercompiler
 
     const char* IntrinsicName(Intrinsic intrinsic) { return intrinsic < Intrinsic::Count ? kIntrinsicNames[usize(intrinsic)] : "?"; }
 
+    u32 IntrinsicArity(Intrinsic intrinsic)
+    {
+        switch (intrinsic)
+        {
+        case Intrinsic::Atan2: case Intrinsic::Pow: case Intrinsic::Min: case Intrinsic::Max: case Intrinsic::Step: case Intrinsic::Fmod:
+        case Intrinsic::Dot: case Intrinsic::Cross: case Intrinsic::Distance: case Intrinsic::Reflect: case Intrinsic::Mul:
+        case Intrinsic::TextureSample: case Intrinsic::BindlessSample: case Intrinsic::BindlessLoad:
+            return 2;
+        case Intrinsic::Clamp: case Intrinsic::Lerp: case Intrinsic::Smoothstep: case Intrinsic::Refract: case Intrinsic::Select:
+        case Intrinsic::TextureSampleLevel: case Intrinsic::TextureSampleCmp: case Intrinsic::TextureSampleCmpLevelZero: case Intrinsic::TextureLoad:
+        case Intrinsic::InterlockedAdd: case Intrinsic::BindlessSampleLevel: case Intrinsic::BindlessStore:
+            return 3;
+        default: return 1;
+        }
+    }
+
     namespace
     {
         void Scan(const Function& f, ExprId id, BindlessUse& use)

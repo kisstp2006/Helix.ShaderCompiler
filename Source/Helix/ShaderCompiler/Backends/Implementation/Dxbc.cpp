@@ -1460,6 +1460,8 @@ namespace helix::shadercompiler
                     Value a, b;
                     if (!Eval(in, e.a, a) || !Eval(in, e.b, b))
                         return false;
+                    if (a.parts.Empty() || b.parts.Empty())
+                        return Fail("an operation on something that has no value");
                     // Matrix with scalar or matrix with matrix: column by column.
                     usize parts = Max(a.parts.Size(), b.parts.Size());
                     for (usize i = 0; i < parts; i++)

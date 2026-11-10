@@ -125,6 +125,8 @@ namespace helix::shadercompiler
     };
 
     const char* IntrinsicName(Intrinsic intrinsic);
+    // The number of arguments an intrinsic takes, the resource or index first where it has one.
+    u32 IntrinsicArity(Intrinsic intrinsic);
     // Count when the name is unknown.
     Intrinsic FindIntrinsic(StringView lowerCaseName);
 
