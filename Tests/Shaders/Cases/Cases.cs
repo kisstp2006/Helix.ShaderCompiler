@@ -993,3 +993,16 @@ public static class Properties
         return new float4(c.x + surface.Tint.x * 0.25f, c.y, r.Width, t.Luma() * 0.5f + surface.Alpha * 0.25f);
     }
 }
+
+/// <summary>Methods of the shader library without an intrinsic, compiled from their C# bodies.</summary>
+public static class LibraryMethods
+{
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        float4x4 m = Mul(float4x4.Translation(new float3(uv.x * 0.25f, 0.125f, 0.0f)), float4x4.Scale(new float3(0.5f, uv.y, 1.0f)));
+        float4 p = Mul(m, new float4(uv, 0.5f, 1.0f));
+        return new float4(p.xyz, 1.0f);
+    }
+}

@@ -287,6 +287,8 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
   texels (`Sample` and `SampleLevel` for float texels, `Load` except on cubes, `Size`), `SampleCmp` and `SampleCmpLevelZero` of 2D,
   array and cube shadow maps with a `SamplerComparisonState`, and uniform structs, textures and samplers
   declared as static fields.
+- Methods of the shader library without an intrinsic (`float4x4.Translation`, `float4x4.Scale`, ...), compiled from
+  their C# bodies when `TranslateOptions::references` holds the HelixEngine.Shaders assembly.
 - `double` is computed as `float`.
 
 Not available, each reported with the method name and the reason: classes and anything allocated, recursion, exceptions,
@@ -339,6 +341,8 @@ cannot be indexed.
   targets are unchanged; half in a uniform block and in a vertex input is rejected.
 - Local functions: a static one, ones that capture a parameter and locals (changed after the capture), one that
   counts its calls in a captured local, and a nested one with a ref parameter.
+- Library methods: a translation and a scale matrix from the library, multiplied and applied to a point; without the
+  library assembly the error names TranslateOptions::references.
 - Properties: auto properties with get, set and init, a property with a body that clamps, computed and readonly
   members, a readonly struct with an object initializer, readonly properties of a uniform struct and computed
   static properties; a static auto property is rejected.

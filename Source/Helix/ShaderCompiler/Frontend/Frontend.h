@@ -17,6 +17,9 @@ namespace helix::shadercompiler
     {
         // Keywords that are not listed are off (zero).
         Span<const KeywordValue> keywords;
+        // Assemblies the shader assembly references, matched by their names. With HelixEngine.Shaders among them the
+        // methods of the library without an intrinsic (float4x4.Translation, ...) compile from their C# bodies.
+        Span<const Assembly* const> references;
     };
 
     // Translates a shader entry point (a static C# method) and every method it calls into a module.

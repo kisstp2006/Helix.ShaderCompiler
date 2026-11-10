@@ -84,16 +84,28 @@ namespace helix::shadercompiler
 
         struct Translator
         {
-            const Assembly& a;
+            // The assembly of the method being translated; assemblies[0] is the shader assembly, the others are references.
+            const Assembly* a;
             Module& m;
             String& error;
 
             const TranslateOptions& options;
+            Array<const Assembly*> assemblies;
+            u32 current = 0;
 
-            Translator(const Assembly& assembly, Module& module, String& e, const TranslateOptions& o) : a(assembly), m(module), error(e), options(o) {}
+            Translator(const Assembly& assembly, Module& module, String& e, const TranslateOptions& o) : a(&assembly), m(module), error(e), options(o)
+            {
+                assemblies.Push(&assembly);
+                for (const Assembly* r : o.references)
+                    if (r && r != &assembly)
+                        assemblies.Push(r);
+            }
 
-            Array<u32> structRows;
-            Array<u32> arrayRows;
+            // Rows are per assembly; types are told apart by both.
+            u64 Key(u32 row) const { return (u64(current) << 32) | row; }
+
+            Array<u64> structRows;
+            Array<u64> arrayRows;
             struct FieldGlobal
             {
                 u32 fieldRow;
@@ -112,6 +124,7 @@ namespace helix::shadercompiler
             // method).
             struct DelegateInfo
             {
+                u32 assembly = 0;
                 u32 target = 0;
                 Array<Type> typeArgs;
                 ExprId closure = 0;
@@ -121,6 +134,7 @@ namespace helix::shadercompiler
             struct Binding
             {
                 u32 arg = 0;
+                u32 assembly = 0;
                 u32 target = 0;
                 Array<Type> typeArgs;
                 i32 closure = -1;
@@ -175,12 +189,12 @@ namespace helix::shadercompiler
             bool Has(Token parent, StringView attribute, Array<AttributeArgument>* fixed = nullptr) const
             {
                 Array<CustomAttribute> attributes;
-                a.Attributes(parent, attributes);
+                a->Attributes(parent, attributes);
                 Array<AttributeArgument> f, n;
                 for (const CustomAttribute& c : attributes)
                     if (c.typeNamespace == kLibrary && c.typeName == attribute)
                     {
-                        if (fixed && !DecodeAttribute(a, c, *fixed, n))
+                        if (fixed && !DecodeAttribute(*a, c, *fixed, n))
                             return false;
                         return true;
                     }
@@ -214,12 +228,12 @@ namespace helix::shadercompiler
             u32 InlineArrayLength(u32 typeRow) const
             {
                 Array<CustomAttribute> attributes;
-                a.Attributes(Token(Table::TypeDef, typeRow), attributes);
+                a->Attributes(Token(Table::TypeDef, typeRow), attributes);
                 for (const CustomAttribute& c : attributes)
                     if (c.typeNamespace == "System.Runtime.CompilerServices" && c.typeName == "InlineArrayAttribute")
                     {
                         Array<AttributeArgument> fixed, named;
-                        if (DecodeAttribute(a, c, fixed, named) && !fixed.Empty() && fixed[0].integer > 0)
+                        if (DecodeAttribute(*a, c, fixed, named) && !fixed.Empty() && fixed[0].integer > 0)
                             return u32(fixed[0].integer);
                     }
                 return 0;
@@ -229,15 +243,15 @@ namespace helix::shadercompiler
             i32 ArrayFor(u32 typeRow, u32 length, StringView method)
             {
                 for (usize i = 0; i < arrayRows.Size(); i++)
-                    if (arrayRows[i] == typeRow)
+                    if (arrayRows[i] == Key(typeRow))
                         return i32(i);
-                TypeDefInfo t = a.TypeDef(typeRow);
+                TypeDefInfo t = a->TypeDef(typeRow);
                 ArrayType array;
                 array.length = length;
                 bool found = false;
                 for (u32 f = t.fieldBegin; f < t.fieldEnd; f++)
                 {
-                    FieldInfo field = a.Field(f);
+                    FieldInfo field = a->Field(f);
                     if (field.IsStatic())
                         continue;
                     TypeSig sig;
@@ -254,7 +268,7 @@ namespace helix::shadercompiler
                     Fail(method, Format("inline array {}: {}", t.name, found ? "arrays of arrays are not available in shaders" : "it has no element field"));
                     return -1;
                 }
-                arrayRows.Push(typeRow);
+                arrayRows.Push(Key(typeRow));
                 m.arrays.Push(Move(array));
                 return i32(m.arrays.Size() - 1);
             }
@@ -262,14 +276,14 @@ namespace helix::shadercompiler
             i32 StructFor(u32 typeRow, StringView method)
             {
                 for (usize i = 0; i < structRows.Size(); i++)
-                    if (structRows[i] == typeRow)
+                    if (structRows[i] == Key(typeRow))
                         return i32(i);
-                TypeDefInfo t = a.TypeDef(typeRow);
+                TypeDefInfo t = a->TypeDef(typeRow);
                 StructType s;
                 s.name = t.name;
                 for (u32 f = t.fieldBegin; f < t.fieldEnd; f++)
                 {
-                    FieldInfo field = a.Field(f);
+                    FieldInfo field = a->Field(f);
                     if (field.IsStatic())
                         continue;
                     TypeSig sig;
@@ -285,7 +299,7 @@ namespace helix::shadercompiler
                     }
                     // A fixed buffer looks like a struct of one element; it is refused before its type is mapped.
                     Array<CustomAttribute> attributes;
-                    a.Attributes(Token(Table::Field, f), attributes);
+                    a->Attributes(Token(Table::Field, f), attributes);
                     for (const CustomAttribute& c : attributes)
                         if (c.typeNamespace == "System.Runtime.CompilerServices" && c.typeName == "FixedBufferAttribute")
                         {
@@ -301,7 +315,7 @@ namespace helix::shadercompiler
                     out.semantic = ReadSemantic(Token(Table::Field, f), out.semanticIndex, out.flat);
                 }
                 // Register after the fields, so nested structs come first.
-                structRows.Push(typeRow);
+                structRows.Push(Key(typeRow));
                 m.structs.Push(Move(s));
                 return i32(m.structs.Size() - 1);
             }
@@ -310,7 +324,7 @@ namespace helix::shadercompiler
             bool IsEnum(u32 typeRow) const
             {
                 StringView ns, name;
-                return a.TypeName(a.TypeDef(typeRow).extends, ns, name) && ns == "System" && name == "Enum";
+                return a->TypeName(a->TypeDef(typeRow).extends, ns, name) && ns == "System" && name == "Enum";
             }
 
             bool MapType(const TypeSig& sig, const Method* method, Type& out, bool& byRef, StringView where)
@@ -334,7 +348,7 @@ namespace helix::shadercompiler
                 case ElementType::ValueType:
                 {
                     StringView ns, name;
-                    if (!a.TypeName(sig.token, ns, name))
+                    if (!a->TypeName(sig.token, ns, name))
                         return false;
                     if (ns == kLibrary)
                         return LibraryType(name, out);
@@ -392,12 +406,12 @@ namespace helix::shadercompiler
             // ---------------------------------------------------------------- delegates
 
             // Variables captured by lambdas and local functions live in these.
-            bool IsClosureType(u32 typeRow) const { return a.TypeDef(typeRow).name.StartsWith("<>c__DisplayClass"); }
+            bool IsClosureType(u32 typeRow) const { return a->TypeDef(typeRow).name.StartsWith("<>c__DisplayClass"); }
 
             // The class of lambdas without captures and the one of cached method groups.
             bool IsLambdaHolder(u32 typeRow) const
             {
-                StringView name = a.TypeDef(typeRow).name;
+                StringView name = a->TypeDef(typeRow).name;
                 return name == "<>c" || name == "<>O";
             }
 
@@ -407,17 +421,17 @@ namespace helix::shadercompiler
                 if (t.Is(Table::TypeSpec))
                 {
                     TypeSig spec;
-                    return ParseTypeSpec(a.TypeSpecSignature(t.Row()), spec) && spec.kind == ElementType::GenericInst && IsDelegateTypeToken(spec.token);
+                    return ParseTypeSpec(a->TypeSpecSignature(t.Row()), spec) && spec.kind == ElementType::GenericInst && IsDelegateTypeToken(spec.token);
                 }
                 StringView ns, name;
-                if (!a.TypeName(t, ns, name))
+                if (!a->TypeName(t, ns, name))
                     return false;
                 if (ns == "System" && (name.StartsWith("Func`") || name == "Action" || name.StartsWith("Action`")))
                     return true;
                 if (!t.Is(Table::TypeDef))
                     return false;
                 StringView baseNs, baseName;
-                return a.TypeName(a.TypeDef(t.Row()).extends, baseNs, baseName) && baseNs == "System" && baseName == "MulticastDelegate";
+                return a->TypeName(a->TypeDef(t.Row()).extends, baseNs, baseName) && baseNs == "System" && baseName == "MulticastDelegate";
             }
 
             bool IsDelegateType(const TypeSig& sig) const
@@ -425,25 +439,25 @@ namespace helix::shadercompiler
                 return (sig.kind == ElementType::GenericInst || sig.kind == ElementType::Class) && IsDelegateTypeToken(sig.token);
             }
 
-            bool MethodHasThis(u32 row) const
+            bool MethodHasThis(u32 assembly, u32 row) const
             {
                 MethodSig sig;
-                return ParseMethodSignature(a.Method(row).signature, sig) && sig.hasThis;
+                return ParseMethodSignature(assemblies[assembly]->Method(row).signature, sig) && sig.hasThis;
             }
 
             static bool SameDelegate(const Method& mt, i32 x, i32 y)
             {
-                const DelegateInfo& a = mt.delegates[usize(x)];
-                const DelegateInfo& b = mt.delegates[usize(y)];
-                if (a.target != b.target || a.typeArgs.Size() != b.typeArgs.Size() || (a.closure == 0) != (b.closure == 0))
+                const DelegateInfo& p = mt.delegates[usize(x)];
+                const DelegateInfo& q = mt.delegates[usize(y)];
+                if (p.assembly != q.assembly || p.target != q.target || p.typeArgs.Size() != q.typeArgs.Size() || (p.closure == 0) != (q.closure == 0))
                     return false;
-                for (usize i = 0; i < a.typeArgs.Size(); i++)
-                    if (!(a.typeArgs[i] == b.typeArgs[i]))
+                for (usize i = 0; i < p.typeArgs.Size(); i++)
+                    if (!(p.typeArgs[i] == q.typeArgs[i]))
                         return false;
-                if (!a.closure)
+                if (!p.closure)
                     return true;
-                const Expr& ca = mt.fn.exprs[a.closure];
-                const Expr& cb = mt.fn.exprs[b.closure];
+                const Expr& ca = mt.fn.exprs[p.closure];
+                const Expr& cb = mt.fn.exprs[q.closure];
                 return ca.kind == cb.kind && ca.index == cb.index;
             }
 
@@ -455,7 +469,7 @@ namespace helix::shadercompiler
                     if (args.Size() != 2 || args[1].kind != ItemKind::Function)
                         return Fail(mt.name, "a delegate must be made of a lambda, a local function or a static method");
                     DelegateInfo d = mt.delegates[usize(args[1].index)];
-                    bool hasThis = MethodHasThis(d.target);
+                    bool hasThis = MethodHasThis(d.assembly, d.target);
                     if (args[0].kind == ItemKind::Value && hasThis && TypeOf(mt, args[0].e).base == BaseType::Struct)
                     {
                         // The closure must be a variable: the lambda writes the captured variables back to it.
@@ -470,7 +484,7 @@ namespace helix::shadercompiler
                         }
                         d.closure = closure;
                     }
-                    else if (args[0].kind != ItemKind::Null || (hasThis && !IsLambdaHolder(a.DeclaringTypeOfMethod(d.target))))
+                    else if (args[0].kind != ItemKind::Null || (hasThis && !IsLambdaHolder(a->DeclaringTypeOfMethod(d.target))))
                         return Fail(mt.name, "a delegate of an instance method is not available in shaders; use a lambda or a static method");
                     mt.delegates.Push(Move(d));
                     mt.stack.Push({0, false, ItemKind::Delegate, i32(mt.delegates.Size() - 1)});
@@ -483,18 +497,18 @@ namespace helix::shadercompiler
                                          "method set in this method or passed by the caller");
                 DelegateInfo d = mt.delegates[usize(args[0].index)];
                 Array<Item> callArgs;
-                if (MethodHasThis(d.target))
+                if (MethodHasThis(d.assembly, d.target))
                     callArgs.Push(d.closure ? Item{d.closure, true} : Item{0, false, ItemKind::Null});
                 for (usize i = 1; i < args.Size(); i++)
                     callArgs.Push(args[i]);
-                return UserCall(mt, d.target, d.typeArgs, callArgs);
+                return UserCall(mt, d.assembly, d.target, d.typeArgs, callArgs);
             }
 
             // System.Span<T> or System.ReadOnlySpan<T>, which the C# compiler uses to index inline arrays.
             bool IsSpanType(const TypeSig& sig) const
             {
                 StringView ns, name;
-                return sig.kind == ElementType::GenericInst && sig.args.Size() == 1 && a.TypeName(sig.token, ns, name) && ns == "System" &&
+                return sig.kind == ElementType::GenericInst && sig.args.Size() == 1 && a->TypeName(sig.token, ns, name) && ns == "System" &&
                        (name == "Span`1" || name == "ReadOnlySpan`1");
             }
 
@@ -502,7 +516,7 @@ namespace helix::shadercompiler
             bool IsImageType(const TypeSig& sig) const
             {
                 StringView ns, name;
-                return sig.kind == ElementType::GenericInst && sig.args.Size() == 1 && a.TypeName(sig.token, ns, name) && ns == kLibrary &&
+                return sig.kind == ElementType::GenericInst && sig.args.Size() == 1 && a->TypeName(sig.token, ns, name) && ns == kLibrary &&
                        name == "RWTexture2D`1";
             }
 
@@ -510,7 +524,7 @@ namespace helix::shadercompiler
             BaseType TextureType(const TypeSig& sig) const
             {
                 StringView ns, name;
-                if (sig.kind != ElementType::GenericInst || sig.args.Size() != 1 || !a.TypeName(sig.token, ns, name) || ns != kLibrary)
+                if (sig.kind != ElementType::GenericInst || sig.args.Size() != 1 || !a->TypeName(sig.token, ns, name) || ns != kLibrary)
                     return BaseType::Void;
                 static constexpr struct
                 {
@@ -530,7 +544,7 @@ namespace helix::shadercompiler
             bool IsBufferType(const TypeSig& sig, bool* writable = nullptr) const
             {
                 StringView ns, name;
-                if (sig.kind != ElementType::GenericInst || sig.args.Size() != 1 || !a.TypeName(sig.token, ns, name) || ns != kLibrary)
+                if (sig.kind != ElementType::GenericInst || sig.args.Size() != 1 || !a->TypeName(sig.token, ns, name) || ns != kLibrary)
                     return false;
                 if (writable)
                     *writable = name.StartsWith("RW");
@@ -778,14 +792,19 @@ namespace helix::shadercompiler
             // Field of a struct or component of a vector or matrix, for ldfld, ldflda and stfld.
             bool FieldExpr(Method& mt, Token token, ExprId object, ExprId& out)
             {
-                StringView name, ns, typeName;
-                if (token.Is(Table::Field))
+                StringView name, ns, typeName, member;
+                // Inside the library a field of one of its types is still the vector component or matrix column.
+                bool library = token.Is(Table::Field) && a->TypeName(Token(Table::TypeDef, a->DeclaringTypeOfField(token.Row())), ns, typeName) &&
+                               ns == kLibrary;
+                if (library)
+                    member = a->Field(token.Row()).name;
+                else if (token.Is(Table::Field))
                 {
-                    u32 typeRow = a.DeclaringTypeOfField(token.Row());
+                    u32 typeRow = a->DeclaringTypeOfField(token.Row());
                     i32 index = StructFor(typeRow, mt.name);
                     if (index < 0)
                         return false;
-                    name = a.Field(token.Row()).name;
+                    name = a->Field(token.Row()).name;
                     const StructType& s = m.structs[usize(index)];
                     for (usize i = 0; i < s.fields.Size(); i++)
                         if (StringView(s.fields[i].name) == name)
@@ -800,20 +819,26 @@ namespace helix::shadercompiler
                         }
                     return Fail(mt.name, Format("unknown field {}", name));
                 }
-                if (!token.Is(Table::MemberRef))
-                    return Fail(mt.name, "unsupported field reference");
-                MemberRefInfo ref = a.MemberRef(token.Row());
-                Type type;
-                if (!a.TypeName(ref.parent, ns, typeName) || ns != kLibrary || !LibraryType(typeName, type))
-                    return Fail(mt.name, Format("field {} of a type that shaders cannot use", ref.name));
-                if (type.IsMatrix() && ref.name.Size() == 2 && ref.name[0] == 'c')
+                else if (token.Is(Table::MemberRef))
                 {
-                    out = Index(mt, object, ConstInt(mt, ref.name[1] - '0', kInt));
+                    MemberRefInfo ref = a->MemberRef(token.Row());
+                    member = ref.name;
+                    if (!a->TypeName(ref.parent, ns, typeName))
+                        return Fail(mt.name, Format("field {} of a type that shaders cannot use", member));
+                }
+                else
+                    return Fail(mt.name, "unsupported field reference");
+                Type type;
+                if (ns != kLibrary || !LibraryType(typeName, type))
+                    return Fail(mt.name, Format("field {} of a type that shaders cannot use", member));
+                if (type.IsMatrix() && member.Size() == 2 && member[0] == 'c')
+                {
+                    out = Index(mt, object, ConstInt(mt, member[1] - '0', kInt));
                     return true;
                 }
-                i32 component = ref.name.Size() == 1 ? ComponentIndex(ref.name[0]) : -1;
+                i32 component = member.Size() == 1 ? ComponentIndex(member[0]) : -1;
                 if (!type.IsVector() || component < 0)
-                    return Fail(mt.name, Format("unknown field {}.{}", typeName, ref.name));
+                    return Fail(mt.name, Format("unknown field {}.{}", typeName, member));
                 u8 c = u8(component);
                 out = Swizzle(mt, object, &c, 1);
                 return true;
@@ -822,11 +847,11 @@ namespace helix::shadercompiler
             // Static fields are resources (uniform block, texture, sampler) or keywords.
             bool StaticField(Method& mt, Token token, Item& out)
             {
-                if (!token.Is(Table::Field))
+                if (!token.Is(Table::Field) || current != 0)
                     return Fail(mt.name, "static fields of other assemblies are not available in shaders");
                 u32 row = token.Row();
                 Token parent(Table::Field, row);
-                FieldInfo field = a.Field(row);
+                FieldInfo field = a->Field(row);
                 if (Has(parent, "KeywordAttribute"))
                 {
                     // Keywords are constants of the variant.
@@ -894,10 +919,10 @@ namespace helix::shadercompiler
                             return Fail(mt.name, Format("storage texture {} has a texel type that shaders cannot use", field.name));
                         // The format is a named argument of the attribute.
                         Array<CustomAttribute> attributes;
-                        a.Attributes(parent, attributes);
+                        a->Attributes(parent, attributes);
                         Array<AttributeArgument> f, named;
                         for (const CustomAttribute& c : attributes)
-                            if (c.typeNamespace == kLibrary && c.typeName == k.attribute && DecodeAttribute(a, c, f, named))
+                            if (c.typeNamespace == kLibrary && c.typeName == k.attribute && DecodeAttribute(*a, c, f, named))
                                 for (const AttributeArgument& n : named)
                                     if (n.name == "Format")
                                         g.format = StorageFormat(n.integer);
@@ -1093,7 +1118,8 @@ namespace helix::shadercompiler
             }
 
             // Members of the vector and matrix types and the functions of the shader library.
-            bool LibraryCall(Method& mt, StringView typeName, StringView member, const MethodSig& sig, Array<Item>& args, bool isNew)
+            // `unknown` is set (without an error) for members the compiler has no intrinsic for; their C# body may compile.
+            bool LibraryCall(Method& mt, StringView typeName, StringView member, const MethodSig& sig, Array<Item>& args, bool isNew, bool& unknown)
             {
                 Type result = kVoid, self;
                 bool byRef = false;
@@ -1129,7 +1155,10 @@ namespace helix::shadercompiler
                     e.kind = ExprKind::Intrinsic;
                     e.intrinsic = FindIntrinsic(lower);
                     if (e.intrinsic == Intrinsic::Count)
-                        return Fail(mt.name, Format("ShaderMath.{} is not known to the compiler", member));
+                    {
+                        unknown = true;
+                        return false;
+                    }
                     if (e.intrinsic == Intrinsic::InterlockedAdd)
                     {
                         const Expr& buffer = mt.fn.exprs[args[0].e];
@@ -1197,7 +1226,10 @@ namespace helix::shadercompiler
                     return Fail(mt.name, Format("{}.{} is not available in shaders", typeName, member));
                 }
                 if (!LibraryType(typeName, self) || !self.IsNumeric())
-                    return Fail(mt.name, Format("{}.{} is not available in shaders", typeName, member));
+                {
+                    unknown = true;
+                    return false;
+                }
 
                 if (member == ".ctor")
                 {
@@ -1276,17 +1308,18 @@ namespace helix::shadercompiler
                         return true;
                     }
                 }
-                return Fail(mt.name, Format("{}.{} is not available in shaders", typeName, member));
+                unknown = true;
+                return false;
             }
 
             i32 FunctionFor(u32 methodRow, const Array<Type>& typeArgs, StringView caller, const Array<Binding>& bindings = Array<Binding>())
             {
-                String key = Format("{}", methodRow);
+                String key = Format("{}:{}", current, methodRow);
                 for (const Type& t : typeArgs)
                     FormatAppend(key, ",{}.{}.{}.{}", u32(t.base), u32(t.rows), u32(t.cols), u32(t.structIndex));
                 for (const Binding& b : bindings)
                 {
-                    FormatAppend(key, ";d{}:{}:{}", b.arg, b.target, b.closure);
+                    FormatAppend(key, ";d{}:{}:{}:{}", b.arg, b.assembly, b.target, b.closure);
                     for (const Type& t : b.typeArgs)
                         FormatAppend(key, ",{}.{}.{}.{}", u32(t.base), u32(t.rows), u32(t.cols), u32(t.structIndex));
                 }
@@ -1296,7 +1329,7 @@ namespace helix::shadercompiler
                 for (const String& b : building)
                     if (b == key)
                     {
-                        Fail(caller, Format("{} is recursive, shaders cannot recurse", a.Method(methodRow).name));
+                        Fail(caller, Format("{} is recursive, shaders cannot recurse", a->Method(methodRow).name));
                         return -1;
                     }
                 building.Push(key);
@@ -1304,10 +1337,130 @@ namespace helix::shadercompiler
                 if (!TranslateMethod(methodRow, typeArgs, bindings, fn))
                     return -1;
                 building.Pop();
-                fn.name = Format("f_{}_{}", a.Method(methodRow).name, m.functions.Size());
+                fn.name = Format("f_{}_{}", a->Method(methodRow).name, m.functions.Size());
                 m.functions.Push(Move(fn));
                 compiled.Push({Move(key), i32(m.functions.Size() - 1)});
                 return i32(m.functions.Size() - 1);
+            }
+
+            // FunctionFor for a method of another assembly; the translation reads that assembly.
+            i32 FunctionIn(u32 assembly, u32 methodRow, const Array<Type>& typeArgs, StringView caller, const Array<Binding>& bindings)
+            {
+                const Assembly* saved = a;
+                u32 savedIndex = current;
+                a = assemblies[assembly];
+                current = assembly;
+                i32 index = FunctionFor(methodRow, typeArgs, caller, bindings);
+                a = saved;
+                current = savedIndex;
+                return index;
+            }
+
+            // The TypeDef a TypeDef or TypeRef token of the current assembly stands for, in whichever assembly defines it.
+            bool ResolveType(Token type, u32& assembly, u32& typeRow) const
+            {
+                if (type.Is(Table::TypeDef))
+                {
+                    assembly = current;
+                    typeRow = type.Row();
+                    return true;
+                }
+                if (!type.Is(Table::TypeRef))
+                    return false;
+                StringView ns, name;
+                if (!a->TypeName(type, ns, name))
+                    return false;
+                Token scope = a->CodedCell(Table::TypeRef, type.Row(), 0);
+                if (scope.Is(Table::TypeRef))
+                {
+                    u32 outer = 0;
+                    if (!ResolveType(scope, assembly, outer))
+                        return false;
+                    typeRow = assemblies[assembly]->FindNestedType(outer, name);
+                    return typeRow != 0;
+                }
+                if (!scope.Is(Table::AssemblyRef))
+                    return false;
+                // Column 6 of AssemblyRef is the name.
+                StringView reference = a->GetString(a->Cell(Table::AssemblyRef, scope.Row(), 6));
+                for (usize i = 0; i < assemblies.Size(); i++)
+                    if (assemblies[i]->Name() == reference)
+                    {
+                        assembly = u32(i);
+                        typeRow = assemblies[i]->FindType(ns, name);
+                        return typeRow != 0;
+                    }
+                return false;
+            }
+
+            static bool SameType(const Assembly& x, const TypeSig& s, const Assembly& y, const TypeSig& t)
+            {
+                if (s.kind != t.kind || s.index != t.index || s.args.Size() != t.args.Size())
+                    return false;
+                if (s.kind == ElementType::ValueType || s.kind == ElementType::Class || s.kind == ElementType::GenericInst)
+                {
+                    StringView ns1, n1, ns2, n2;
+                    if (!x.TypeName(s.token, ns1, n1) || !y.TypeName(t.token, ns2, n2) || ns1 != ns2 || n1 != n2)
+                        return false;
+                }
+                for (usize i = 0; i < s.args.Size(); i++)
+                    if (!SameType(x, s.args[i], y, t.args[i]))
+                        return false;
+                return true;
+            }
+
+            // The MethodDef a MemberRef of the current assembly names: same type, name and signature.
+            bool ResolveMethodRef(Token token, u32& assembly, u32& row) const
+            {
+                MemberRefInfo ref = a->MemberRef(token.Row());
+                u32 typeRow = 0;
+                MethodSig want;
+                if (!ResolveType(ref.parent, assembly, typeRow) || !ParseMethodSignature(ref.signature, want))
+                    return false;
+                const Assembly& target = *assemblies[assembly];
+                TypeDefInfo t = target.TypeDef(typeRow);
+                for (u32 r = t.methodBegin; r < t.methodEnd; r++)
+                {
+                    MethodInfo info = target.Method(r);
+                    MethodSig have;
+                    if (info.name != ref.name || !ParseMethodSignature(info.signature, have) || have.hasThis != want.hasThis ||
+                        have.genericParamCount != want.genericParamCount || have.params.Size() != want.params.Size() ||
+                        !SameType(*a, want.returnType, target, have.returnType))
+                        continue;
+                    bool same = true;
+                    for (usize i = 0; same && i < want.params.Size(); i++)
+                        same = SameType(*a, want.params[i], target, have.params[i]);
+                    if (same)
+                    {
+                        row = r;
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            // A method of the shader library the compiler has no intrinsic for: its C# body is compiled like user code.
+            bool LibraryBody(Method& mt, Token method, const Array<Type>& typeArgs, StringView typeName, StringView member, Array<Item>& args, bool isNew)
+            {
+                u32 assembly = current, row = 0;
+                if (method.Is(Table::MethodDef))
+                    row = method.Row();
+                else if (!method.Is(Table::MemberRef) || !ResolveMethodRef(method, assembly, row))
+                {
+                    bool loaded = false;
+                    for (const Assembly* r : assemblies)
+                        loaded = loaded || r->Name() == kLibrary;
+                    return Fail(mt.name, Format("{}.{} is not available in shaders{}", typeName, member,
+                                                loaded ? "" : " (pass HelixEngine.Shaders in TranslateOptions::references to compile the methods of the library)"));
+                }
+                Array<CustomAttribute> attributes;
+                assemblies[assembly]->Attributes(Token(Table::MethodDef, row), attributes);
+                for (const CustomAttribute& c : attributes)
+                    if (c.typeNamespace == kLibrary && c.typeName == "IntrinsicAttribute")
+                        return Fail(mt.name, Format("{}.{} is an intrinsic the compiler does not know", typeName, member));
+                if (isNew)
+                    return Fail(mt.name, Format("this constructor of {} is not available in shaders", typeName));
+                return UserCall(mt, assembly, row, typeArgs, args);
             }
 
             bool Call(Method& mt, Token token, bool isNew)
@@ -1316,7 +1469,7 @@ namespace helix::shadercompiler
                 if (token.Is(Table::MethodSpec))
                 {
                     Array<TypeSig> sigs;
-                    if (!ParseMethodSpec(a.GetBlob(a.Cell(Table::MethodSpec, token.Row(), 1)), sigs))
+                    if (!ParseMethodSpec(a->GetBlob(a->Cell(Table::MethodSpec, token.Row(), 1)), sigs))
                         return Fail(mt.name, "damaged generic method instantiation");
                     for (const TypeSig& s : sigs)
                     {
@@ -1324,7 +1477,7 @@ namespace helix::shadercompiler
                         if (!MapType(s, &mt, typeArgs.Emplace(), byRef, mt.name))
                             return Fail(mt.name, "a generic method is used with a type that shaders cannot use");
                     }
-                    token = a.CodedCell(Table::MethodSpec, token.Row(), 0);
+                    token = a->CodedCell(Table::MethodSpec, token.Row(), 0);
                 }
                 MethodSig sig;
                 StringView ns, typeName, member;
@@ -1332,20 +1485,23 @@ namespace helix::shadercompiler
                      delegate = false;
                 if (user)
                 {
-                    MethodInfo info = a.Method(token.Row());
+                    MethodInfo info = a->Method(token.Row());
                     member = info.name;
                     if (!ParseMethodSignature(info.signature, sig))
                         return Fail(mt.name, "damaged method signature");
                     // Helpers the C# compiler adds for inline arrays.
-                    inlineArray = a.TypeDef(a.DeclaringTypeOfMethod(token.Row())).name == "<PrivateImplementationDetails>" && member.StartsWith("InlineArray");
-                    delegate = IsDelegateTypeToken(Token(Table::TypeDef, a.DeclaringTypeOfMethod(token.Row())));
+                    inlineArray = a->TypeDef(a->DeclaringTypeOfMethod(token.Row())).name == "<PrivateImplementationDetails>" && member.StartsWith("InlineArray");
+                    delegate = IsDelegateTypeToken(Token(Table::TypeDef, a->DeclaringTypeOfMethod(token.Row())));
+                    // Inside the library its own types and functions are still the intrinsic ones.
+                    if (a->TypeName(Token(Table::TypeDef, a->DeclaringTypeOfMethod(token.Row())), ns, typeName) && ns == kLibrary)
+                        user = false;
                 }
                 else if (token.Is(Table::MemberRef))
                 {
-                    MemberRefInfo ref = a.MemberRef(token.Row());
+                    MemberRefInfo ref = a->MemberRef(token.Row());
                     member = ref.name;
                     TypeSig spec;
-                    bool generic = ref.parent.Is(Table::TypeSpec) && ParseTypeSpec(a.TypeSpecSignature(ref.parent.Row()), spec);
+                    bool generic = ref.parent.Is(Table::TypeSpec) && ParseTypeSpec(a->TypeSpecSignature(ref.parent.Row()), spec);
                     if (IsDelegateTypeToken(ref.parent))
                     {
                         delegate = true;
@@ -1376,7 +1532,7 @@ namespace helix::shadercompiler
                         if (!ParseMethodSignature(ref.signature, sig))
                             return Fail(mt.name, "damaged method signature");
                     }
-                    else if (!ParseMethodSignature(ref.signature, sig) || !a.TypeName(ref.parent, ns, typeName))
+                    else if (!ParseMethodSignature(ref.signature, sig) || !a->TypeName(ref.parent, ns, typeName))
                         return Fail(mt.name, Format("call to {} cannot be resolved (generic library types are not supported yet)", ref.name));
                 }
                 else
@@ -1407,12 +1563,15 @@ namespace helix::shadercompiler
                 {
                     if (ns != kLibrary)
                         return Fail(mt.name, Format("{}.{}.{} is not available in shaders", ns, typeName, member));
-                    return LibraryCall(mt, typeName, member, sig, args, isNew);
+                    bool unknown = false;
+                    if (LibraryCall(mt, typeName, member, sig, args, isNew, unknown))
+                        return true;
+                    return unknown && LibraryBody(mt, token, typeArgs, typeName, member, args, isNew);
                 }
-                if (isNew && IsClosureType(a.DeclaringTypeOfMethod(token.Row())))
+                if (isNew && IsClosureType(a->DeclaringTypeOfMethod(token.Row())))
                 {
                     // A new closure: its fields are the captured variables, set by the code that follows.
-                    i32 closure = StructFor(a.DeclaringTypeOfMethod(token.Row()), mt.name);
+                    i32 closure = StructFor(a->DeclaringTypeOfMethod(token.Row()), mt.name);
                     if (closure < 0)
                         return false;
                     Expr zero;
@@ -1423,12 +1582,12 @@ namespace helix::shadercompiler
                 }
                 if (isNew)
                     return Fail(mt.name, Format("constructor {} of a user type: use a static method or set the fields", member));
-                return UserCall(mt, token.Row(), typeArgs, args);
+                return UserCall(mt, current, token.Row(), typeArgs, args);
             }
 
             // A call of a method of the shader assembly. Delegate arguments select the compiled form of the callee and pass
             // their closure; a null `this` (lambdas without captures) passes nothing.
-            bool UserCall(Method& mt, u32 row, const Array<Type>& typeArgs, Array<Item>& args)
+            bool UserCall(Method& mt, u32 assembly, u32 row, const Array<Type>& typeArgs, Array<Item>& args)
             {
                 Array<Binding> bindings;
                 for (usize i = 0; i < args.Size(); i++)
@@ -1438,11 +1597,12 @@ namespace helix::shadercompiler
                     const DelegateInfo& d = mt.delegates[usize(args[i].index)];
                     Binding& b = bindings.Emplace();
                     b.arg = u32(i);
+                    b.assembly = d.assembly;
                     b.target = d.target;
                     b.typeArgs = d.typeArgs;
                     b.closure = d.closure ? i32(TypeOf(mt, d.closure).structIndex) : -1;
                 }
-                i32 index = FunctionFor(row, typeArgs, mt.name, bindings);
+                i32 index = assembly == current ? FunctionFor(row, typeArgs, mt.name, bindings) : FunctionIn(assembly, row, typeArgs, mt.name, bindings);
                 if (index < 0)
                     return false;
                 const Function& callee = m.functions[usize(index)];
@@ -1678,7 +1838,7 @@ namespace helix::shadercompiler
                         if (method.Is(Table::MethodSpec))
                         {
                             Array<TypeSig> sigs;
-                            if (!ParseMethodSpec(a.GetBlob(a.Cell(Table::MethodSpec, method.Row(), 1)), sigs))
+                            if (!ParseMethodSpec(a->GetBlob(a->Cell(Table::MethodSpec, method.Row(), 1)), sigs))
                                 return Fail(mt.name, "damaged generic method instantiation");
                             for (const TypeSig& s : sigs)
                             {
@@ -1686,10 +1846,11 @@ namespace helix::shadercompiler
                                 if (!MapType(s, &mt, d.typeArgs.Emplace(), byRef, mt.name))
                                     return Fail(mt.name, "a generic method is used with a type that shaders cannot use");
                             }
-                            method = a.CodedCell(Table::MethodSpec, method.Row(), 0);
+                            method = a->CodedCell(Table::MethodSpec, method.Row(), 0);
                         }
                         if (!method.Is(Table::MethodDef))
                             return Fail(mt.name, "a delegate of a method of another assembly is not available in shaders");
+                        d.assembly = current;
                         d.target = method.Row();
                         mt.delegates.Push(Move(d));
                         mt.stack.Push({0, false, ItemKind::Function, i32(mt.delegates.Size() - 1)});
@@ -1806,7 +1967,7 @@ namespace helix::shadercompiler
                     case Opcode::Ldsfld: case Opcode::Ldsflda:
                     {
                         Token token(u32(in.value));
-                        if (token.Is(Table::Field) && IsLambdaHolder(a.DeclaringTypeOfField(token.Row())))
+                        if (token.Is(Table::Field) && IsLambdaHolder(a->DeclaringTypeOfField(token.Row())))
                         {
                             // The instance lambdas without captures are called on; they never read it.
                             mt.stack.Push({0, false, ItemKind::Null});
@@ -1889,7 +2050,7 @@ namespace helix::shadercompiler
                                 targets.Push(t);
                         }
                         Array<Item> carried = mt.stack;
-                        u32 current = blockIndex;
+                        u32 link = blockIndex;
                         for (usize t = 0; t < targets.Size(); t++)
                         {
                             ExprId condition = 0;
@@ -1910,11 +2071,11 @@ namespace helix::shadercompiler
                                 rest = i32(mt.blocks.Size() - 1);
                             }
                             u32 saved = blockIndex;
-                            blockIndex = current;
+                            blockIndex = link;
                             mt.stack = carried;
                             finish(FlowBlock::End::Branch, condition, targets[t], rest);
                             blockIndex = saved;
-                            current = u32(rest);
+                            link = u32(rest);
                         }
                         if (targets.Empty())
                             finish(FlowBlock::End::Goto, 0, next, -1);
@@ -1935,11 +2096,11 @@ namespace helix::shadercompiler
             bool TranslateMethod(u32 row, const Array<Type>& typeArgs, const Array<Binding>& bindings, Function& out)
             {
                 Method mt;
-                MethodInfo info = a.Method(row);
+                MethodInfo info = a->Method(row);
                 mt.name = info.name;
                 mt.typeArgs = typeArgs;
                 MethodBody body;
-                if (!ParseMethodSignature(info.signature, mt.sig) || !a.Body(row, body))
+                if (!ParseMethodSignature(info.signature, mt.sig) || !a->Body(row, body))
                     return Fail(mt.name, "the method has no body that can be read");
                 if (body.hasExceptionRegions)
                     return Fail(mt.name, "try, catch and finally are not available in shaders");
@@ -1947,7 +2108,7 @@ namespace helix::shadercompiler
                 if (!MapType(mt.sig.returnType, &mt, mt.fn.returnType, byRef, mt.name) || byRef)
                     return Fail(mt.name, "the return type cannot be used in shaders");
 
-                if (mt.sig.hasThis && IsLambdaHolder(a.DeclaringTypeOfMethod(row)))
+                if (mt.sig.hasThis && IsLambdaHolder(a->DeclaringTypeOfMethod(row)))
                 {
                     // Lambdas without captures are instance methods of a class without fields; this is never read.
                     mt.argParam.Push(-1);
@@ -1955,7 +2116,7 @@ namespace helix::shadercompiler
                 }
                 else if (mt.sig.hasThis)
                 {
-                    i32 self = StructFor(a.DeclaringTypeOfMethod(row), mt.name);
+                    i32 self = StructFor(a->DeclaringTypeOfMethod(row), mt.name);
                     if (self < 0)
                         return false;
                     Variable& v = mt.fn.params.Emplace();
@@ -1979,6 +2140,7 @@ namespace helix::shadercompiler
                                                         "known when the shader compiles",
                                                         i + 1));
                         DelegateInfo d;
+                        d.assembly = b->assembly;
                         d.target = b->target;
                         d.typeArgs = b->typeArgs;
                         mt.argParam.Push(-1);
@@ -2004,7 +2166,7 @@ namespace helix::shadercompiler
                     v.mode = byRef ? ParamMode::InOut : ParamMode::In;
                     for (u32 p = info.paramBegin; p < info.paramEnd; p++)
                     {
-                        ParamInfo pi = a.Param(p);
+                        ParamInfo pi = a->Param(p);
                         if (pi.sequence != i + 1)
                             continue;
                         v.name = pi.name;
@@ -2017,7 +2179,7 @@ namespace helix::shadercompiler
                 if (!body.localsSignature.IsNull())
                 {
                     Array<TypeSig> locals;
-                    if (!body.localsSignature.Is(Table::StandAloneSig) || !ParseLocalsSignature(a.StandAloneSignature(body.localsSignature.Row()), locals))
+                    if (!body.localsSignature.Is(Table::StandAloneSig) || !ParseLocalsSignature(a->StandAloneSignature(body.localsSignature.Row()), locals))
                         return Fail(mt.name, "damaged local variable signature");
                     for (const TypeSig& s : locals)
                     {
@@ -2056,7 +2218,7 @@ namespace helix::shadercompiler
                 {
                     const Instruction& c = mt.code[i];
                     Token cache(u32(c.value));
-                    if (c.opcode != Opcode::Ldsfld || !cache.Is(Table::Field) || !IsLambdaHolder(a.DeclaringTypeOfField(cache.Row())) ||
+                    if (c.opcode != Opcode::Ldsfld || !cache.Is(Table::Field) || !IsLambdaHolder(a->DeclaringTypeOfField(cache.Row())) ||
                         mt.code[i + 1].opcode != Opcode::Dup || (mt.code[i + 2].opcode != Opcode::Brtrue && mt.code[i + 2].opcode != Opcode::BrtrueS) ||
                         mt.code[i + 3].opcode != Opcode::Pop)
                         continue;

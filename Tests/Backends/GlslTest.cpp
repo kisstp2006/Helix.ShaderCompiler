@@ -206,6 +206,12 @@ HX_TEST(Glsl, EmitsComputeShadersWithStorageBuffers)
     std::printf("    %s\n", error.CStr());
     HX_CHECK(StringView(error).Contains("static property Gain") && StringView(error).Contains("computed property"));
 
+    // Methods of the library without an intrinsic compile only when the library assembly is passed.
+    u32 libraryMethods = a.FindType("Helix.ShaderTests.Cases", "LibraryMethods");
+    HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(libraryMethods, "Fragment"), Stage::Fragment, module, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("Translation") && StringView(error).Contains("TranslateOptions::references"));
+
     // Local functions and their closure struct get names that are valid GLSL identifiers.
     u32 locals = a.FindType("Helix.ShaderTests.Cases", "LocalFunctions");
     HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(locals, "Fragment"), Stage::Fragment, module, error) &&
