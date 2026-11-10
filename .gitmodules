@@ -1,0 +1,12 @@
+[submodule "External/Helix.CMake"]
+	path = External/Helix.CMake
+	url = https://github.com/kisstp2006/Helix.CMake
+[submodule "External/Helix.Testing"]
+	path = External/Helix.Testing
+	url = https://github.com/kisstp2006/Helix.Testing
+[submodule "External/Helix.Core"]
+	path = External/Helix.Core
+	url = https://github.com/kisstp2006/Helix.Core
+[submodule "External/Helix.Shaders"]
+	path = External/Helix.Shaders
+	url = https://github.com/kisstp2006/Helix.Shaders

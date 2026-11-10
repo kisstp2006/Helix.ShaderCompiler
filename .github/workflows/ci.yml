@@ -1,0 +1,12 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    uses: kisstp2006/Helix.CMake/.github/workflows/build.yml@main
+    with:
+      dotnet: true
