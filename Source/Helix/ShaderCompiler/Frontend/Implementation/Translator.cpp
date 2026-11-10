@@ -33,6 +33,12 @@ namespace helix::shadercompiler
                 out = Type::Scalar(BaseType::Texture2D);
                 return true;
             }
+            // A bindless resource is the index it was registered under.
+            if (name == "BindlessTexture" || name == "BindlessBuffer")
+            {
+                out = kUInt;
+                return true;
+            }
             if (name == "RWTexture2D")
             {
                 out = Type::Scalar(BaseType::Image);
@@ -328,6 +334,10 @@ namespace helix::shadercompiler
                 case ExprKind::ConstFloat: case ExprKind::ConstInt: case ExprKind::ConstBool: return false;
                 case ExprKind::Local: return !mt.temporary[e.index];
                 case ExprKind::Param: case ExprKind::Global: case ExprKind::Call: return true;
+                case ExprKind::Intrinsic:
+                    if (e.intrinsic == Intrinsic::BindlessLoad)
+                        return true;
+                    break;
                 default: break;
                 }
                 if ((e.a && ReadsState(mt, e.a)) || (e.b && ReadsState(mt, e.b)))
@@ -688,6 +698,57 @@ namespace helix::shadercompiler
                     }
                     Push(mt, make(Move(e)));
                     return true;
+                }
+                if (typeName == "BindlessTexture" || typeName == "BindlessBuffer")
+                {
+                    if (member == ".ctor")
+                    {
+                        if (isNew)
+                            Push(mt, Coerce(mt, args[0].e, kUInt));
+                        else
+                            Assign(mt, args[0].e, args[1].e);
+                        return true;
+                    }
+                    if (member == "get_Index")
+                    {
+                        Push(mt, args[0].e);
+                        return true;
+                    }
+                    static constexpr struct
+                    {
+                        StringView member;
+                        Intrinsic intrinsic;
+                    } kMembers[] = {{"Sample", Intrinsic::BindlessSample}, {"SampleLevel", Intrinsic::BindlessSampleLevel},
+                                    {"get_Size", Intrinsic::BindlessSize},  {"Load", Intrinsic::BindlessLoad},
+                                    {"Load2", Intrinsic::BindlessLoad},     {"Load3", Intrinsic::BindlessLoad},
+                                    {"Load4", Intrinsic::BindlessLoad},     {"Store", Intrinsic::BindlessStore},
+                                    {"Store2", Intrinsic::BindlessStore},   {"Store3", Intrinsic::BindlessStore},
+                                    {"Store4", Intrinsic::BindlessStore}};
+                    for (const auto& k : kMembers)
+                    {
+                        if (member != k.member)
+                            continue;
+                        Expr e;
+                        e.kind = ExprKind::Intrinsic;
+                        e.intrinsic = k.intrinsic;
+                        e.type = result;
+                        e.args.Push(args[0].e);
+                        for (usize i = 1; i < args.Size(); i++)
+                            e.args.Push(args[i].e);
+                        ExprId value = AddExpr(mt.fn, Move(e));
+                        if (k.intrinsic == Intrinsic::BindlessStore)
+                        {
+                            // A write to memory runs exactly here.
+                            Flush(mt);
+                            Stmt& s = mt.stmts->Emplace();
+                            s.kind = StmtKind::Evaluate;
+                            s.a = value;
+                        }
+                        else
+                            Push(mt, value);
+                        return true;
+                    }
+                    return Fail(mt.name, Format("{}.{} is not available in shaders", typeName, member));
                 }
                 if (typeName == "RWTexture2D")
                 {

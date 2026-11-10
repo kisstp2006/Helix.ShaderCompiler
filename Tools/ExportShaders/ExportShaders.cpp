@@ -90,10 +90,14 @@ int main(int argc, char** argv)
             GlslShader glsl, essl;
             DxbcShader dxbc;
             String error;
-            // Compute shaders exist from GLSL 4.30 and GLSL ES 3.10.
-            if (!TranslateEntryPoint(a, method, stage, module, error) ||
-                !EmitGlsl(module, compute ? GlslTarget::Glsl430 : GlslTarget::Glsl330, glsl, error) ||
-                !EmitGlsl(module, compute ? GlslTarget::Essl310 : GlslTarget::Essl300, essl, error) ||
+            // Compute shaders exist from GLSL 4.30 and GLSL ES 3.10, bindless buffers from GLSL 4.30 and bindless textures from
+            // 4.50 with ARB_bindless_texture; GLES has no bindless resources, so those shaders get no ES source.
+            bool translated = TranslateEntryPoint(a, method, stage, module, error);
+            BindlessUse bindless = translated ? FindBindless(module) : BindlessUse();
+            GlslTarget desktop = bindless.textures ? GlslTarget::Glsl450 : compute || bindless.buffers ? GlslTarget::Glsl430 : GlslTarget::Glsl330;
+            bool mobile = !bindless.textures && !bindless.buffers;
+            if (!translated || !EmitGlsl(module, desktop, glsl, error) ||
+                (mobile && !EmitGlsl(module, compute ? GlslTarget::Essl310 : GlslTarget::Essl300, essl, error)) ||
                 !EmitDxbc(module, dxbc, error))
             {
                 std::fprintf(stderr, "%s.%s: %s\n", String(type.name).CStr(), String(a.Method(method).name).CStr(), error.CStr());

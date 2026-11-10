@@ -71,6 +71,8 @@ namespace helix::shadercompiler
         // Keywords the code read, with the values of this variant.
         Array<KeywordUse> keywords;
         u32 groupSize[3] = {1, 1, 1};
+        // Whether the renderer has to bind the bindless tables (textures, buffers, the buffer heap as writable).
+        BindlessUse bindless;
 
         const ReflectedBlock* FindBlock(StringView name) const;
         const ReflectedResource* FindResource(StringView name) const;
@@ -87,6 +89,7 @@ namespace helix::shadercompiler
         Array<ReflectedResource> resources;
         Array<ReflectedValue> vertexInputs, targets;
         Array<KeywordUse> keywords;
+        BindlessUse bindless;
     };
 
     // Joins a vertex and a fragment stage and checks that they fit: a slot holds the same block or resource in both,

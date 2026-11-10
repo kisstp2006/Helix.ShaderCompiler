@@ -147,6 +147,22 @@ offset, or texture slot), builds the default data of each block that takes prope
 converted to the member type, tiling one and zero) and tells which blocks also hold members the renderer has to fill and
 which properties the pass does not use. A property whose member or texture has another type is an error naming both.
 
+## Bindless resources
+
+`BindlessTexture` and `BindlessBuffer` are the indices the renderer registered a texture (with its sampler) or a buffer
+under, so a shader reaches resources without binding slots: indices can sit in uniform blocks, buffers or vertex data.
+In the compiled code they are plain `uint` values.
+
+| C# | GLSL 4.50 (textures) / 4.30 (buffers) | Direct3D (shader model 5.0) |
+|---|---|---|
+| `texture.Sample(uv)`, `SampleLevel(uv, level)` | `texture(sampler2D(hx_textures[i]), uv)` with ARB_bindless_texture, handle table at binding 7 | entry from the table `t127` (pool, slice, sampler); a chain of conditions picks the array pool `t96 + pool` and the sampler `s8 + sampler`; fragment shaders sample with gradients taken before that flow |
+| `buffer.Load(offset)` to `Load4` | heap words at binding 9, (offset, size) table at binding 8 | table `t125`, heap `t126` (`u7` in compute shaders) |
+| `buffer.Store(offset, value)` to `Store4` | the same heap, writable | heap `u7`; compute shaders only |
+| `buffer.Size` | size column of the table | size column of the table |
+
+GLSL ES and GLSL 3.30 have no bindless resources; compiling such a shader for them is an error. `AsFloat`, `AsUInt` and
+`AsInt` reinterpret bits (`uintBitsToFloat` and friends in GLSL, nothing at all in Direct3D).
+
 ## Compute shaders and storage buffers
 
 ```csharp
@@ -298,6 +314,9 @@ Not written yet for Direct3D: front facing input, depth output, writing a vector
 - Compute: five kernels (a uniform and a buffer, structs between two buffers on a 2D grid, an in place update with a
   helper that loops and returns early on a 3D grid, counters shared through atomic adds, a storage texture) run on the CPU and are dispatched as GLSL 4.30 and as Direct3D
   bytecode on every adapter; the buffers must be the same byte by byte, texels within the last bit.
+- Bindless: a fragment case with two bindless textures (different samplers) and a bindless buffer, and a kernel that reads one
+  bindless buffer and writes another; they run on GL 4.5 with ARB_bindless_texture and on the Direct3D emulation of every
+  adapter, and are skipped where the device has no bindless resources.
 - Material: properties of every kind tied to members, tiling and texture slots with their default data, a block that mixes
   properties with other members, a shader whose properties the pass does not use, and a type mismatch.
 - Reflection: block members with offsets (also std140 corner cases and nested structs), resources per variant, compute
@@ -316,7 +335,8 @@ Not written yet for Direct3D: front facing input, depth output, writing a vector
 
 ## Shaders of the Helix.RHI tests
 
-Helix.RHI sits below this library and cannot compile shaders in its own build, so its tests use shaders compiled here.
+Helix.RHI sits below this library and cannot compile shaders in its own build, so its tests and its example use shaders
+compiled here; GLES gets no source for bindless shaders, since it has no bindless resources.
 The target `export_rhi_shaders` (part of the default build on desktop) writes `Generated/CompiledShaders.h` into the build
 directory from `Tests/Shaders/Rhi`. After changing those shaders, copy the file to `Tests/Support/CompiledShaders.h` of
 Helix.RHI and run its tests.

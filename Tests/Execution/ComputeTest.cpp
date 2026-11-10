@@ -58,6 +58,7 @@ namespace
         u32 kernelCount = r.U32();
         HX_REQUIRE(kernelCount >= 3);
         u32 passed = 0;
+        u32 skipped = 0;
         for (u32 k = 0; k < kernelCount; k++)
         {
             u32 nameLength = 0;
@@ -118,6 +119,39 @@ namespace
                 TextureHandle texture = d.CreateTexture({.format = rhi::Format::RGBA8Unorm, .width = width, .height = height, .usage = TextureStorage | TextureSampled});
                 HX_REQUIRE(texture.IsValid());
                 images.Push({texture, after, width, height, slot});
+            }
+            struct Heap
+            {
+                BufferHandle buffer;
+                const u8* expected;
+                u32 size, index;
+            };
+            Array<Heap> heap;
+            bool skip = false;
+            u32 heapCount = r.U32();
+            for (u32 i = 0; i < heapCount; i++)
+            {
+                u32 bytes = r.U32();
+                const u8* before = r.Bytes(bytes);
+                const u8* after = r.Bytes(bytes);
+                HX_REQUIRE(before && after);
+                skip = skip || !d.Caps().bindlessBuffers;
+                if (skip)
+                    continue;
+                BufferHandle buffer = d.CreateBuffer({.size = bytes, .usage = BufferStorage, .bindless = true, .initialData = before});
+                HX_REQUIRE(buffer.IsValid());
+                heap.Push({buffer, after, bytes, d.RegisterBindlessBuffer(buffer)});
+                HX_CHECK_EQ(heap.Back().index, i);
+            }
+            if (skip)
+            {
+                std::printf("    %s: no bindless buffers on %s, skipped\n", name.CStr(), d.Caps().renderer);
+                for (const Bound& b : buffers)
+                    d.Destroy(b.buffer);
+                for (const Image& image : images)
+                    d.Destroy(image.texture);
+                skipped++;
+                continue;
             }
 
             Module module;
@@ -200,6 +234,26 @@ namespace
                         ok = false;
                     }
                 }
+                for (const Heap& h : heap)
+                {
+                    Array<u8> bytes;
+                    bytes.Resize(h.size);
+                    u32 wrong = 0, first = 0;
+                    if (d.ReadBuffer(h.buffer, 0, bytes.Data(), h.size))
+                    {
+                        for (u32 i = 0; i < h.size; i++)
+                            if (bytes[i] != h.expected[i] && !wrong++)
+                                first = i;
+                    }
+                    else
+                        wrong = 1;
+                    if (wrong)
+                    {
+                        std::printf("    %s (%s): bindless buffer %u has %u wrong bytes, the first at byte %u: GPU %u, CPU %u\n", name.CStr(),
+                                    direct3d ? "DXBC" : "GLSL 430", h.index, wrong, first, u32(bytes[first]), u32(h.expected[first]));
+                        ok = false;
+                    }
+                }
                 for (const Bound& b : buffers)
                 {
                     if (!b.expected)
@@ -229,10 +283,15 @@ namespace
                 d.Destroy(b.buffer);
             for (const Image& image : images)
                 d.Destroy(image.texture);
+            for (usize i = heap.Size(); i-- > 0;)
+            {
+                d.UnregisterBindlessBuffer(heap[i].index);
+                d.Destroy(heap[i].buffer);
+            }
             HX_CHECK(ok);
             passed += ok ? 1 : 0;
         }
-        std::printf("    %u of %u kernels match the CPU on %s (%s)\n", passed, kernelCount, d.Caps().renderer, direct3d ? "Direct3D bytecode" : "GLSL 430");
+        std::printf("    %u of %u kernels match the CPU on %s (%s)\n", passed, kernelCount - skipped, d.Caps().renderer, direct3d ? "Direct3D bytecode" : "GLSL 430");
     }
 }
 

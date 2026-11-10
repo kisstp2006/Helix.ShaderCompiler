@@ -129,6 +129,7 @@ void RunCases(Device& d, bool direct3d)
     // Desktop GLSL 3.30 always, 4.50 as well where the driver has it.
     GlslTarget targets[2] = {GlslTarget::Glsl330, GlslTarget::Glsl450};
     u32 targetCount = !direct3d && (d.Caps().apiMajor > 4 || (d.Caps().apiMajor == 4 && d.Caps().apiMinor >= 5)) ? 2 : 1;
+    u32 fullTargetCount = targetCount, skipped = 0;
     u32 passed = 0;
     for (u32 c = 0; c < caseCount; c++)
     {
@@ -187,9 +188,50 @@ void RunCases(Device& d, bool direct3d)
         TranslateOptions options;
         options.keywords = Span<const KeywordValue>(keywords.Data(), keywords.Size());
 
+        // Bindless resources, registered in the order of their CPU indices; on a fresh table the indices match.
+        Array<TextureHandle> bindlessTextures;
+        Array<BufferHandle> bindlessBuffers;
+        Array<u32> bindlessIndices, bufferIndices;
+        bool skip = false;
+        u32 bindlessTextureCount = r.U32();
+        for (u32 t = 0; t < bindlessTextureCount; t++)
+        {
+            u32 width = r.U32(), height = r.U32(), filter = r.U32(), address = r.U32();
+            const u8* pixels = r.Bytes(usize(width) * height * 4);
+            HX_REQUIRE(pixels != nullptr);
+            skip = skip || !d.Caps().bindlessTextures;
+            if (skip)
+                continue;
+            bindlessTextures.Push(d.CreateTexture({.format = Format::RGBA8Unorm, .width = width, .height = height, .bindless = true, .initialData = pixels}));
+            Filter f = filter == 1 ? Filter::Linear : Filter::Nearest;
+            AddressMode mode = address == 1 ? AddressMode::ClampToEdge : AddressMode::Repeat;
+            samplers.Push(d.CreateSampler({.minFilter = f, .magFilter = f, .mipFilter = Filter::Nearest, .addressU = mode, .addressV = mode}));
+            bindlessIndices.Push(d.RegisterBindless(bindlessTextures.Back(), samplers.Back()));
+            HX_CHECK_EQ(bindlessIndices.Back(), t);
+        }
+        u32 bindlessBufferCount = r.U32();
+        for (u32 b = 0; b < bindlessBufferCount; b++)
+        {
+            u32 bytes = r.U32();
+            const u8* data = r.Bytes(bytes);
+            HX_REQUIRE(data != nullptr);
+            skip = skip || !d.Caps().bindlessBuffers;
+            if (skip)
+                continue;
+            bindlessBuffers.Push(d.CreateBuffer({.size = bytes, .usage = BufferStorage, .bindless = true, .initialData = data}));
+            bufferIndices.Push(d.RegisterBindlessBuffer(bindlessBuffers.Back()));
+            HX_CHECK_EQ(bufferIndices.Back(), b);
+        }
+
         u32 type = a.FindType("Helix.ShaderTests.Cases", name);
         HX_REQUIRE(type != 0);
         bool caseOk = true;
+        if (skip)
+        {
+            std::printf("    %s: no bindless resources on %s, skipped\n", label.CStr(), d.Caps().renderer);
+            skipped++;
+            targetCount = 0;
+        }
         for (u32 version = 0; version < targetCount && caseOk; version++)
         {
             Module vertexModule, fragmentModule;
@@ -198,6 +240,9 @@ void RunCases(Device& d, bool direct3d)
             String error;
             bool compiled = TranslateEntryPoint(a, a.FindMethod(fullscreen, "Vertex"), Stage::Vertex, vertexModule, error) &&
                             TranslateEntryPoint(a, a.FindMethod(type, "Fragment"), Stage::Fragment, fragmentModule, error, options);
+            // Bindless textures exist from GLSL 4.50 on, with the extension.
+            if (compiled && !direct3d && targets[version] == GlslTarget::Glsl330 && FindBindless(fragmentModule).textures)
+                continue;
             if (compiled && direct3d)
                 compiled = EmitDxbc(vertexModule, vertexCode, error) && EmitDxbc(fragmentModule, fragmentCode, error);
             else if (compiled)
@@ -287,14 +332,26 @@ void RunCases(Device& d, bool direct3d)
             d.Destroy(vs);
             d.Destroy(fs);
         }
+        // Released in reverse, so the next case gets the lowest indices again.
+        for (usize i = bindlessIndices.Size(); i-- > 0;)
+            d.UnregisterBindless(bindlessIndices[i]);
+        for (usize i = bufferIndices.Size(); i-- > 0;)
+            d.UnregisterBindlessBuffer(bufferIndices[i]);
+        for (TextureHandle t : bindlessTextures)
+            d.Destroy(t);
+        for (BufferHandle b : bindlessBuffers)
+            d.Destroy(b);
         for (TextureHandle t : textures)
             d.Destroy(t);
         for (SamplerHandle s : samplers)
             d.Destroy(s);
+        targetCount = fullTargetCount;
+        if (skip)
+            continue;
         HX_CHECK(caseOk);
         passed += caseOk ? 1 : 0;
     }
-    std::printf("    %u of %u shaders match the CPU on %s (%s)\n", passed, caseCount, d.Caps().renderer,
+    std::printf("    %u of %u shaders match the CPU on %s (%s)\n", passed, caseCount - skipped, d.Caps().renderer,
                 direct3d ? "Direct3D bytecode" : targetCount == 2 ? "GLSL 330 and 450" : "GLSL 330");
     d.Destroy(target);
     d.Destroy(vertices);

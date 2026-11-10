@@ -165,3 +165,42 @@ public static class Paint
         image[new int2((int)id.x, (int)id.y)] = new float4(uv, ((id.x ^ id.y) & 1u) != 0u ? 1.0f : 0.25f, 1.0f);
     }
 }
+
+/// <summary>Reads one bindless buffer and writes another, both named by indices in a uniform block.</summary>
+public static class BindlessWrites
+{
+    public static readonly int3 Groups = new(2, 1, 1);
+
+    public struct Params
+    {
+        public BindlessBuffer source;
+        public BindlessBuffer target;
+        public uint scale;
+        public uint pad;
+    }
+
+    [Uniform(0)] public static Params data;
+
+    public static void Setup()
+    {
+        uint[] words = new uint[64];
+        for (int i = 0; i < words.Length; i++)
+            words[i] = (uint)(i * 3 + 1);
+        data.source = Bindless.Register(words);
+        data.target = Bindless.Register(new uint[130]);
+        data.scale = 5u;
+    }
+
+    [ComputeShader(32)]
+    public static void Run([DispatchThreadId] uint3 id)
+    {
+        uint offset = id.x * 4u;
+        if (offset >= data.source.Size)
+            return;
+        uint value = data.source.Load(offset);
+        data.target.Store(offset, value * data.scale + id.x);
+        // Even threads also write two words past the first 64, so no two threads write the same word.
+        if ((id.x & 1u) == 0u)
+            data.target.Store2(256u + offset, data.source.Load2(offset) + new uint2(1000u, data.target.Size));
+    }
+}

@@ -15,6 +15,9 @@ namespace Helix.ShaderOracle;
 /// File layout (little endian): u32 size, u32 caseCount, u32 offset of the kernel section, then per case: u16 name length, name, size * size RGBA8 pixels
 /// (rows top first), u32 uniformCount { u32 slot, u32 byteCount, bytes }, u32 textureCount { u32 slot, u32 width,
 /// u32 height, u32 filter, u32 address, RGBA8 pixels }, u32 keywordCount { u16 name length, name, i32 value }.
+/// Then per case: u32 bindlessTextureCount { u32 width, u32 height, u32 filter, u32 address, RGBA8 pixels }, u32
+/// bindlessBufferCount { u32 byteCount, bytes }, in the order of their indices. Per kernel at the end: u32
+/// bindlessBufferCount { u32 byteCount, bytes before, bytes after }.
 /// A case with [Keyword] fields is written once per combination of their values.
 ///
 /// Kernel section, the compute tests of Helix.ShaderTests.Kernels: u32 kernelCount, then per kernel: u16 name length, name,
@@ -75,6 +78,30 @@ internal static class Program
         }
     }
 
+    private static void WriteTexture(BinaryWriter w, Texture2D texture, SamplerState sampler)
+    {
+        w.Write((uint)texture.Size.x);
+        w.Write((uint)texture.Size.y);
+        w.Write((uint)sampler.Filter);
+        w.Write((uint)sampler.Address);
+        foreach (float4 pixel in texture.Pixels!)
+            WritePixel(w, pixel);
+    }
+
+    private static void WriteBindless(BinaryWriter w)
+    {
+        w.Write((uint)Bindless.TextureCount);
+        for (uint i = 0; i < Bindless.TextureCount; i++)
+            WriteTexture(w, Bindless.Texture(i).Texture, Bindless.Texture(i).Sampler);
+        w.Write((uint)Bindless.BufferCount);
+        for (uint i = 0; i < Bindless.BufferCount; i++)
+        {
+            byte[] bytes = ArrayBytes(Bindless.Buffer(i));
+            w.Write((uint)bytes.Length);
+            w.Write(bytes);
+        }
+    }
+
     private static int WriteKernels(BinaryWriter w, Assembly shaders)
     {
         List<(Type type, MethodInfo run)> kernels = shaders.GetTypes()
@@ -87,7 +114,9 @@ internal static class Program
         w.Write((uint)kernels.Count);
         foreach ((Type type, MethodInfo run) in kernels)
         {
+            Bindless.Clear();
             type.GetMethod("Setup", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+            List<byte[]> bindlessBefore = Enumerable.Range(0, Bindless.BufferCount).Select(i => ArrayBytes(Bindless.Buffer((uint)i))).ToList();
             byte[] name = System.Text.Encoding.ASCII.GetBytes(type.Name);
             w.Write((ushort)name.Length);
             w.Write(name);
@@ -133,6 +162,13 @@ internal static class Program
                 foreach (float4 pixel in image.Pixels!)
                     WritePixel(w, pixel);
             }
+            w.Write((uint)bindlessBefore.Count);
+            for (int i = 0; i < bindlessBefore.Count; i++)
+            {
+                w.Write((uint)bindlessBefore[i].Length);
+                w.Write(bindlessBefore[i]);
+                w.Write(ArrayBytes(Bindless.Buffer((uint)i)));
+            }
         }
         return kernels.Count;
     }
@@ -161,6 +197,7 @@ internal static class Program
         w.Write(0u);
         foreach ((Type type, MethodInfo fragment, (FieldInfo field, int value)[] keywords) in runs)
         {
+            Bindless.Clear();
             type.GetMethod("Setup", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
             foreach ((FieldInfo field, int value) in keywords)
                 field.SetValue(null, field.FieldType.IsEnum ? Enum.ToObject(field.FieldType, value) : value != 0);
@@ -208,6 +245,7 @@ internal static class Program
                 w.Write(keyword);
                 w.Write(value);
             }
+            WriteBindless(w);
         }
         uint kernelSection = (uint)w.BaseStream.Position;
         int kernels = WriteKernels(w, shaders);

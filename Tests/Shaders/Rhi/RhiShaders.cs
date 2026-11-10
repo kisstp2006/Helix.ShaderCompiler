@@ -231,3 +231,100 @@ public static class Cull
         vertices[first + 5] = new float2(x0, 1.0f);
     }
 }
+
+/// <summary>A quad placed by x0 and x1 that samples the bindless texture named in the same block.</summary>
+public static class BindlessQuad
+{
+    public struct Draw
+    {
+        public BindlessTexture texture;
+        public float x0, x1, pad;
+    }
+
+    [Uniform(0)] public static Draw draw;
+
+    [VertexShader]
+    public static UvVaryings Vertex([Location(0)] float2 p)
+    {
+        UvVaryings o;
+        o.position = new float4((draw.x0 + (draw.x1 - draw.x0) * p.x) * 2.0f - 1.0f, p.y * 2.0f - 1.0f, 0.5f, 1.0f);
+        o.uv = p;
+        return o;
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment(UvVaryings input) => draw.texture.Sample(input.uv);
+}
+
+/// <summary>A quad placed by x0 and x1 whose color is read from a bindless buffer, 16 bytes in.</summary>
+public static class BindlessColor
+{
+    public struct Draw
+    {
+        public BindlessBuffer colors;
+        public float x0, x1, pad;
+    }
+
+    [Uniform(0)] public static Draw draw;
+
+    [VertexShader]
+    [return: Position]
+    public static float4 Vertex([Location(0)] float2 p) =>
+        new float4((draw.x0 + (draw.x1 - draw.x0) * p.x) * 2.0f - 1.0f, p.y * 2.0f - 1.0f, 0.5f, 1.0f);
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment() => AsFloat(draw.colors.Load4(16u));
+}
+
+/// <summary>Writes id * 3 + its own index into every word of a bindless buffer.</summary>
+public static class HeapWrites
+{
+    public struct Params
+    {
+        public BindlessBuffer buffer;
+        public uint pad0, pad1, pad2;
+    }
+
+    [Uniform(0)] public static Params parameters;
+
+    [ComputeShader(64)]
+    public static void Compute([DispatchThreadId] uint3 id)
+    {
+        if (id.x * 4u >= parameters.buffer.Size)
+            return;
+        parameters.buffer.Store(id.x * 4u, id.x * 3u + parameters.buffer.Index);
+    }
+}
+
+/// <summary>The rotating triangle of the RHI example: rotation (cos, sin) and aspect in the frame block.</summary>
+public static class Spinning
+{
+    public struct Frame
+    {
+        public float4 rotation;
+    }
+
+    public struct Varyings
+    {
+        [Position] public float4 position;
+        [Location(0)] public float3 color;
+    }
+
+    [Uniform(0)] public static Frame frame;
+
+    [VertexShader]
+    public static Varyings Vertex([Location(0)] float2 p, [Location(1)] float3 c)
+    {
+        float4 r = frame.rotation;
+        Varyings o;
+        o.position = new float4((p.x * r.x - p.y * r.y) * r.z, p.x * r.y + p.y * r.x, 0.5f, 1.0f);
+        o.color = c;
+        return o;
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment(Varyings input) => new float4(input.color, 1.0f);
+}

@@ -22,7 +22,7 @@ namespace helix::shadercompiler
             kDclResource = 88, kDclConstantBuffer = 89, kDclSampler = 90, kDclInput = 95, kDclInputSgv = 96, kDclInputPs = 98,
             kDclInputPsSiv = 100, kDclOutput = 101, kDclOutputSiv = 103, kDclTemps = 104,
             kImad = 35, kBufinfo = 121, kDclThreadGroup = 155, kDclUavTyped = 156, kDclUavRaw = 157, kDclResourceRaw = 161, kStoreUavTyped = 164, kLdRaw = 165,
-            kStoreRaw = 166, kImmAtomicIadd = 180,
+            kStoreRaw = 166, kImmAtomicIadd = 180, kSampleD = 73,
         };
         constexpr u32 kTestNonZero = 1u << 18;
         constexpr u32 kSaturate = 1u << 13;
@@ -110,6 +110,7 @@ namespace helix::shadercompiler
             // Storage buffers in use, as indices of the module's globals.
             Array<u32> storages;
             bool threadId = false;
+            BindlessUse bindless;
 
             Generator(const Module& module, String& e) : m(module), error(e) {}
 
@@ -457,6 +458,119 @@ namespace helix::shadercompiler
                 in.words[0] |= 0x80000000u;
                 in.words.Push(0x80000002u | (11u << 6));
                 in.words.Push(0x00199983u);
+            }
+
+            // ---------------------------------------------------------------- bindless resources (the RHI emulation)
+
+            static constexpr u32 kTextureTable = 127, kBufferTable = 125, kHeap = 126, kHeapUav = 7, kPools = 96, kPoolCount = 16, kSamplers = 8,
+                                 kSamplerCount = 8;
+
+            // Operand of a raw table (t register), all four components.
+            static void PutTable(Instruction& in, u32 reg)
+            {
+                in.words.Push(0x00107E46u);
+                in.words.Push(reg);
+            }
+
+            // The heap: t126 in graphics shaders, the writable view u7 in compute shaders.
+            void PutHeap(Instruction& in, u32 modeAndSwizzle)
+            {
+                bool compute = m.stage == Stage::Compute;
+                in.words.Push((compute ? 0x0011E000u : 0x00107000u) | modeAndSwizzle);
+                in.words.Push(compute ? kHeapUav : kHeap);
+            }
+
+            // (byte offset, size) of a bindless buffer from the buffer table.
+            Src BufferEntry(const Src& index)
+            {
+                Src address = index.kind == Src::Immediate ? ImmI(index.imm[index.Component(0)] * 8u) : Emit(kIshl, 1, index, ImmI(3), false);
+                Src d = NewTemp(2, false);
+                Instruction in(kLdRaw);
+                PutRawInfo(in);
+                PutDst(in, Whole(d));
+                PutScalar(in, address);
+                PutTable(in, kBufferTable);
+                Finish(in);
+                return d;
+            }
+
+            // Writes `op` of a and b into one component of a fixed register (conditions in the selection chains).
+            void EmitInto(const Src& target, u32 opcode, const Src& a, const Src& b)
+            {
+                Instruction in(opcode);
+                PutDst(in, Whole(target));
+                PutSrc(in, a);
+                PutSrc(in, b);
+                Finish(in);
+            }
+
+            // Shader model 5 has no indexing of texture registers: the entry of the texture table names the pool (bits 0
+            // to 4), the slice (5 to 15) and the sampler (16 and up), and a chain of conditions picks the registers.
+            // Implicit derivatives are not defined inside that flow, so fragment shaders take them before it.
+            Src BindlessSample(const Expr& e, const Src& index, const Src& uv, const Src& level)
+            {
+                Src address = index.kind == Src::Immediate ? ImmI(index.imm[index.Component(0)] * 4u) : Emit(kIshl, 1, index, ImmI(2), false);
+                Src entry = NewTemp(1, false);
+                {
+                    Instruction in(kLdRaw);
+                    PutRawInfo(in);
+                    PutDst(in, Whole(entry));
+                    PutScalar(in, address);
+                    PutTable(in, kTextureTable);
+                    Finish(in);
+                }
+                Src pool = Emit(kAnd, 1, entry, ImmI(31), false);
+                Src sampler = Emit(kUshr, 1, entry, ImmI(16), false);
+                Src slice = Emit(kUtof, 1, Emit(kAnd, 1, Emit(kUshr, 1, entry, ImmI(5), false), ImmI(2047), false));
+                Src coord = NewTemp(3);
+                Dst xy = Whole(coord);
+                xy.count = 2;
+                Store(xy, uv);
+                Dst z = Whole(coord);
+                z.comps[0] = 2;
+                z.count = 1;
+                Store(z, slice);
+                bool gradients = e.intrinsic == Intrinsic::BindlessSample && m.stage == Stage::Fragment;
+                Src dx, dy;
+                if (gradients)
+                {
+                    dx = Emit(kDerivRtx, 3, coord);
+                    dy = Emit(kDerivRty, 3, coord);
+                }
+                Src result = NewTemp(4), poolMatch = NewTemp(1, false), samplerMatch = NewTemp(1, false);
+                Store(Whole(result), ImmF(0.0f, 4));
+                for (u32 p = 0; p < kPoolCount; p++)
+                {
+                    EmitInto(poolMatch, kIeq, pool, ImmI(p));
+                    Conditional(kIf, poolMatch);
+                    for (u32 s = 0; s < kSamplerCount; s++)
+                    {
+                        EmitInto(samplerMatch, kIeq, sampler, ImmI(s));
+                        Conditional(kIf, samplerMatch);
+                        Instruction in(gradients ? kSampleD : kSampleL);
+                        // Extended tokens: a two dimensional texture array, float results.
+                        in.words[0] |= 0x80000000u;
+                        in.words.Push(0x80000202u);
+                        in.words.Push(0x00155543u);
+                        PutDst(in, Whole(result));
+                        PutSrc(in, coord);
+                        in.words.Push(0x00107E46u);
+                        in.words.Push(kPools + p);
+                        in.words.Push(0x00106000u);
+                        in.words.Push(kSamplers + s);
+                        if (gradients)
+                        {
+                            PutSrc(in, dx);
+                            PutSrc(in, dy);
+                        }
+                        else
+                            PutScalar(in, level);
+                        Finish(in);
+                        Simple(kEndif);
+                    }
+                    Simple(kEndif);
+                }
+                return result;
             }
 
             // Byte address of `offset` bytes into element `index`.
@@ -961,6 +1075,42 @@ namespace helix::shadercompiler
                     PutSrc(divide, ImmI(SequentialSize(m, m.globals[global].element)));
                     Finish(divide);
                     return result(d);
+                }
+                case Intrinsic::AsFloat: case Intrinsic::AsUInt: case Intrinsic::AsInt:
+                {
+                    // Registers hold bits; only how later instructions read them changes.
+                    Src bits = arg(0);
+                    bits.isFloat = e.intrinsic == Intrinsic::AsFloat;
+                    if (bits.modifier)
+                        bits = Emit(kMov, n, bits, bits.isFloat);
+                    return result(bits);
+                }
+                case Intrinsic::BindlessSample: case Intrinsic::BindlessSampleLevel: return result(BindlessSample(e, arg(0), arg(1), args.Size() > 2 ? arg(2) : ImmF(0.0f)));
+                case Intrinsic::BindlessSize: return result(Pick(BufferEntry(arg(0)), 1));
+                case Intrinsic::BindlessLoad:
+                {
+                    Src address = Emit(kIadd, 1, Pick(BufferEntry(arg(0)), 0), arg(1), false);
+                    Src d = NewTemp(n, false);
+                    Instruction ins(kLdRaw);
+                    PutRawInfo(ins);
+                    PutDst(ins, Whole(d));
+                    PutScalar(ins, address);
+                    PutHeap(ins, 0xE46u);
+                    Finish(ins);
+                    return result(d);
+                }
+                case Intrinsic::BindlessStore:
+                {
+                    if (m.stage != Stage::Compute)
+                        return Fail("bindless buffers can only be written in compute shaders");
+                    Src address = Emit(kIadd, 1, Pick(BufferEntry(arg(0)), 0), arg(1), false);
+                    Instruction ins(kStoreRaw);
+                    PutHeap(ins, 0x2u | (((1u << arg(2).count) - 1u) << 4));
+                    PutScalar(ins, address);
+                    PutSrc(ins, arg(2));
+                    Finish(ins);
+                    out.type = kVoid;
+                    return true;
                 }
                 case Intrinsic::InterlockedAdd:
                 {
@@ -1619,6 +1769,7 @@ namespace helix::shadercompiler
                 for (const Function& f : m.functions)
                     hasLoop.Push(ContainsLoop(f.body) ? 1 : 0);
 
+                bindless = FindBindless(m);
                 Instance entry;
                 entry.fn = &m.functions[m.entry];
                 entry.entry = true;
@@ -1696,6 +1847,28 @@ namespace helix::shadercompiler
                     u32 words[] = {kDclSampler | (3u << 24), 0x00106000u, slot, kDclResource | (3u << 11) | (4u << 24), 0x00107000u, slot, 0x00005555u};
                     body.Append(words, 7);
                 }
+                if (bindless.textures)
+                {
+                    for (u32 s = 0; s < kSamplerCount; s++)
+                    {
+                        u32 words[] = {kDclSampler | (3u << 24), 0x00106000u, kSamplers + s};
+                        body.Append(words, 3);
+                    }
+                    for (u32 p = 0; p < kPoolCount; p++)
+                    {
+                        u32 words[] = {kDclResource | (8u << 11) | (4u << 24), 0x00107000u, kPools + p, 0x00005555u};
+                        body.Append(words, 4);
+                    }
+                    u32 table[] = {kDclResourceRaw | (3u << 24), 0x00107000u, kTextureTable};
+                    body.Append(table, 3);
+                }
+                if (bindless.buffers)
+                {
+                    u32 table[] = {kDclResourceRaw | (3u << 24), 0x00107000u, kBufferTable};
+                    body.Append(table, 3);
+                    u32 heap[] = {(m.stage == Stage::Compute ? kDclUavRaw : kDclResourceRaw) | (3u << 24), m.stage == Stage::Compute ? 0x0011E000u : 0x00107000u, m.stage == Stage::Compute ? kHeapUav : kHeap};
+                    body.Append(heap, 3);
+                }
                 for (u32 global : storages)
                 {
                     const Global& g = m.globals[global];
@@ -1727,7 +1900,7 @@ namespace helix::shadercompiler
                 body.Append(code.Data(), code.Size());
 
                 // Structured buffers and compute exist from shader model 5.
-                bool model5 = compute || !storages.Empty();
+                bool model5 = compute || !storages.Empty() || bindless.textures || bindless.buffers;
                 Array<u8> shdr;
                 AppendU32(shdr, (compute ? 0x00050000u : m.stage == Stage::Vertex ? 0x00010000u : 0u) | (model5 ? 0x50u : 0x40u));
                 AppendU32(shdr, u32(body.Size()) + 2);

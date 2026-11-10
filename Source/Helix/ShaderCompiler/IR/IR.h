@@ -89,7 +89,10 @@ namespace helix::shadercompiler
     X(Distance, "distance") X(Normalize, "normalize") X(Reflect, "reflect") X(Refract, "refract") X(Ddx, "ddx") X(Ddy, "ddy")  \
     X(Fwidth, "fwidth") X(Select, "select") X(Any, "any") X(All, "all") X(Mul, "mul") X(Transpose, "transpose")               \
     X(TextureSample, "texture.sample") X(TextureSampleLevel, "texture.samplelevel") X(TextureLoad, "texture.load")             \
-    X(TextureSize, "texture.size") X(BufferLength, "buffer.length") X(InterlockedAdd, "interlockedadd")
+    X(TextureSize, "texture.size") X(BufferLength, "buffer.length") X(InterlockedAdd, "interlockedadd")                         \
+    X(BindlessSample, "bindless.sample") X(BindlessSampleLevel, "bindless.samplelevel") X(BindlessLoad, "bindless.load")       \
+    X(BindlessStore, "bindless.store") X(BindlessSize, "bindless.size") X(AsFloat, "asfloat") X(AsUInt, "asuint")            \
+    X(AsInt, "asint")
 
     enum class Intrinsic : u8
     {
@@ -102,6 +105,15 @@ namespace helix::shadercompiler
     const char* IntrinsicName(Intrinsic intrinsic);
     // Count when the name is unknown.
     Intrinsic FindIntrinsic(StringView lowerCaseName);
+
+    // Bindless textures and buffers are uint indices in the IR; these intrinsics reach the resources behind them.
+    struct BindlessUse
+    {
+        bool textures = false, buffers = false, bufferWrites = false;
+    };
+    struct Module;
+    // What the statements of the module (not dead expressions) use.
+    BindlessUse FindBindless(const Module& module);
 
     enum class Op : u8
     {

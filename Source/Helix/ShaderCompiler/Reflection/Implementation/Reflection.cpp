@@ -90,6 +90,7 @@ namespace helix::shadercompiler
         error.Clear();
         out.stage = m.stage;
         out.keywords = m.keywords;
+        out.bindless = FindBindless(m);
         for (int i = 0; i < 3; i++)
             out.groupSize[i] = m.groupSize[i];
 
@@ -204,6 +205,9 @@ namespace helix::shadercompiler
                     return false;
                 }
             }
+            out.bindless.textures = out.bindless.textures || stage->bindless.textures;
+            out.bindless.buffers = out.bindless.buffers || stage->bindless.buffers;
+            out.bindless.bufferWrites = out.bindless.bufferWrites || stage->bindless.bufferWrites;
             for (const KeywordUse& use : stage->keywords)
             {
                 bool known = false;

@@ -509,3 +509,53 @@ public static class StructLocals
         return new float4(copy.inner.a.x * 0.5f, copy.c.y, cleared.b + copy.c.x, copy.count / 8.0f);
     }
 }
+
+/// <summary>Two bindless textures with different samplers and a bindless buffer, all reached through indices in a uniform block.</summary>
+public static class BindlessResources
+{
+    public struct Params
+    {
+        public BindlessTexture checker;
+        public BindlessTexture smooth;
+        public BindlessBuffer colors;
+        public uint count;
+    }
+
+    [Uniform(0)] public static Params data;
+
+    public static void Setup()
+    {
+        float4[] pixels = new float4[16];
+        for (int y = 0; y < 4; y++)
+            for (int x = 0; x < 4; x++)
+                pixels[y * 4 + x] = new float4(x * 85 / 255.0f, y * 85 / 255.0f, (x ^ y) & 1, 1.0f);
+        data.checker = Bindless.Register(Texture2D.FromPixels(pixels, 4, 4), new SamplerState { Filter = SamplerFilter.Nearest, Address = SamplerAddress.Repeat });
+        data.smooth = Bindless.Register(Texture2D.FromPixels(new float4[] { new(1, 0, 0, 1), new(0, 1, 0, 1), new(0, 0, 1, 1), new(1, 1, 1, 1) }, 2, 2),
+                                        new SamplerState { Filter = SamplerFilter.Linear, Address = SamplerAddress.Clamp });
+        float4[] colors = { new(1.0f, 0.0f, 0.5f, 1.0f), new(0.0f, 1.0f, 0.25f, 1.0f), new(0.5f, 0.5f, 1.0f, 1.0f), new(0.25f, 0.75f, 0.0f, 1.0f) };
+        uint[] words = new uint[16];
+        for (int i = 0; i < 4; i++)
+        {
+            uint4 bits = AsUInt(colors[i]);
+            words[i * 4] = bits.x;
+            words[i * 4 + 1] = bits.y;
+            words[i * 4 + 2] = bits.z;
+            words[i * 4 + 3] = bits.w;
+        }
+        data.colors = Bindless.Register(words);
+        data.count = 4u;
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        float4 a = data.checker.Sample(uv * 2.0f);
+        float4 b = data.smooth.SampleLevel(uv, 0.0f);
+        uint cell = (uint)(uv.x * 4.0f);
+        if (cell >= data.count)
+            cell = data.count - 1u;
+        float4 c = AsFloat(data.colors.Load4(cell * 16u));
+        return new float4(a.x * 0.5f + c.x * 0.5f, b.y * 0.5f + c.y * 0.5f, a.z * 0.25f + b.z * 0.25f + c.z * 0.5f, data.colors.Size / 64.0f);
+    }
+}

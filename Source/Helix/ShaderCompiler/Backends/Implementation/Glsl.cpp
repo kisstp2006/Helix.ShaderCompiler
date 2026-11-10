@@ -218,6 +218,50 @@ namespace helix::shadercompiler
                     Value(e.args[0]);
                     out.Append(".length()");
                     return true;
+                case Intrinsic::BindlessSample:
+                case Intrinsic::BindlessSampleLevel:
+                    out.Append(e.intrinsic == Intrinsic::BindlessSample ? "texture(sampler2D(hx_textures[" : "textureLod(sampler2D(hx_textures[");
+                    Value(e.args[0]);
+                    out.Append("]), ");
+                    Value(e.args[1]);
+                    if (e.intrinsic == Intrinsic::BindlessSampleLevel)
+                    {
+                        out.Append(", ");
+                        Value(e.args[2]);
+                    }
+                    out.Append(')');
+                    return true;
+                case Intrinsic::BindlessLoad:
+                case Intrinsic::BindlessStore:
+                {
+                    u32 count = e.intrinsic == Intrinsic::BindlessLoad ? e.type.rows : fn->exprs[e.args[2]].type.rows;
+                    FormatAppend(out, "hx_{}{}(", e.intrinsic == Intrinsic::BindlessLoad ? "load" : "store", count);
+                    Args(e);
+                    out.Append(')');
+                    return true;
+                }
+                case Intrinsic::BindlessSize:
+                    out.Append("hx_buffers[");
+                    Value(e.args[0]);
+                    out.Append("].y");
+                    return true;
+                case Intrinsic::AsFloat:
+                case Intrinsic::AsUInt:
+                case Intrinsic::AsInt:
+                {
+                    // Between int and uint the bits stay with a plain conversion.
+                    bool fromFloat = first.base == BaseType::Float, fromInt = first.base == BaseType::Int;
+                    const char* name = e.intrinsic == Intrinsic::AsFloat ? (fromInt ? "intBitsToFloat" : "uintBitsToFloat")
+                                       : fromFloat ? (e.intrinsic == Intrinsic::AsUInt ? "floatBitsToUint" : "floatBitsToInt")
+                                                   : nullptr;
+                    if (name)
+                        return call(name);
+                    out.Append(TypeName(e.type));
+                    out.Append('(');
+                    Value(e.args[0]);
+                    out.Append(')');
+                    return true;
+                }
                 case Intrinsic::InterlockedAdd:
                     out.Append("atomicAdd(");
                     Value(e.args[0]);
@@ -587,6 +631,13 @@ namespace helix::shadercompiler
                 bool modern = target == GlslTarget::Glsl430 || target == GlslTarget::Glsl450 || target == GlslTarget::Essl310;
                 if (m.stage == Stage::Compute && !modern)
                     return Fail("compute shaders need GLSL 4.30 or GLSL ES 3.10");
+                BindlessUse bindless = FindBindless(m);
+                if (bindless.textures && target != GlslTarget::Glsl450)
+                    return Fail("bindless textures need GLSL 4.50 with ARB_bindless_texture");
+                if (bindless.buffers && (!modern || target == GlslTarget::Essl310))
+                    return Fail("bindless buffers need GLSL 4.30 or 4.50");
+                if (bindless.textures)
+                    out.Append("#extension GL_ARB_bindless_texture : require\n");
                 for (usize i = 0; i < m.structs.Size(); i++)
                 {
                     FormatAppend(out, "struct {}\n{{\n", TypeName(Type::Struct(u32(i))));
@@ -624,6 +675,30 @@ namespace helix::shadercompiler
                     {
                         FormatAppend(out, "uniform sampler2D g_{};\n", g.name);
                         shader.bindings.Push({Format("g_{}", g.name), GlobalKind::Texture, g.slot});
+                    }
+                }
+                // The tables of the RHI: texture handles at binding 7, buffer (offset, size) pairs at 8, the heap at 9.
+                if (bindless.textures)
+                    out.Append("layout(std430, binding = 7) readonly buffer hx_bindless_textures\n{\n    uvec2 hx_textures[];\n};\n");
+                if (bindless.buffers)
+                {
+                    out.Append("layout(std430, binding = 8) readonly buffer hx_bindless_table\n{\n    uvec2 hx_buffers[];\n};\n");
+                    FormatAppend(out, "layout(std430, binding = 9) {}buffer hx_bindless_heap\n{{\n    uint hx_heap[];\n}};\n",
+                                 bindless.bufferWrites ? "" : "readonly ");
+                    static constexpr const char* kTypes[] = {"uint", "uvec2", "uvec3", "uvec4"};
+                    for (u32 n = 1; n <= 4; n++)
+                    {
+                        FormatAppend(out, "{} hx_load{}(uint i, uint o)\n{{\n    uint w = (hx_buffers[i].x + o) >> 2u;\n    return {}(hx_heap[w]", kTypes[n - 1], n,
+                                     kTypes[n - 1]);
+                        for (u32 c = 1; c < n; c++)
+                            FormatAppend(out, ", hx_heap[w + {}u]", c);
+                        out.Append(");\n}\n");
+                        if (!bindless.bufferWrites)
+                            continue;
+                        FormatAppend(out, "void hx_store{}(uint i, uint o, {} v)\n{{\n    uint w = (hx_buffers[i].x + o) >> 2u;\n", n, kTypes[n - 1]);
+                        for (u32 c = 0; c < n; c++)
+                            FormatAppend(out, "    hx_heap[w + {}u] = v{};\n", c, n == 1 ? "" : c == 0 ? ".x" : c == 1 ? ".y" : c == 2 ? ".z" : ".w");
+                        out.Append("}\n");
                     }
                 }
                 out.Append('\n');
