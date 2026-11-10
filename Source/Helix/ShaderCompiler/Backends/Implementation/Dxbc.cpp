@@ -22,7 +22,7 @@ namespace helix::shadercompiler
             kDclResource = 88, kDclConstantBuffer = 89, kDclSampler = 90, kDclInput = 95, kDclInputSgv = 96, kDclInputPs = 98,
             kDclInputPsSgv = 99, kDclInputPsSiv = 100, kDclOutput = 101, kDclOutputSiv = 103, kDclTemps = 104,
             kImad = 35, kBufinfo = 121, kDclThreadGroup = 155, kDclUavTyped = 156, kDclUavRaw = 157, kDclResourceRaw = 161, kStoreUavTyped = 164, kLdRaw = 165,
-            kStoreRaw = 166, kImmAtomicIadd = 180, kSampleD = 73,
+            kStoreRaw = 166, kImmAtomicIadd = 180, kSampleD = 73, kLdUavTyped = 163,
         };
         constexpr u32 kTestNonZero = 1u << 18;
         constexpr u32 kSaturate = 1u << 13;
@@ -693,6 +693,13 @@ namespace helix::shadercompiler
                 return e.kind == ExprKind::Global && m.globals[e.index].type.base == BaseType::Buffer;
             }
 
+            // The return type token of typed resource instructions: 5 float, 4 unsigned, 3 signed integer for every component.
+            static u32 ReturnTypeToken(Type t)
+            {
+                u32 kind = t.base == BaseType::UInt ? 4u : t.base == BaseType::Int ? 3u : 5u;
+                return 3u | ((kind * 0x1111u) << 6);
+            }
+
             bool IsImage(const Instance& in, ExprId id) const
             {
                 const Expr& e = in.fn->exprs[id];
@@ -894,6 +901,14 @@ namespace helix::shadercompiler
                 for (ExprId id : e.args)
                 {
                     const Expr& arg = in.fn->exprs[id];
+                    if (arg.type.base == BaseType::Image)
+                    {
+                        Value v;
+                        v.type = arg.type;
+                        v.parts.Push(ImmI(arg.index));
+                        args.Push(Move(v));
+                        continue;
+                    }
                     if (arg.type.base == BaseType::Buffer)
                     {
                         if (!IsStorage(in, id))
@@ -1203,6 +1218,21 @@ namespace helix::shadercompiler
                     Finish(ins);
                     return result(d);
                 }
+                case Intrinsic::ImageSize:
+                {
+                    u32 global = arg(0).imm[0];
+                    Src d = NewTemp(4, false);
+                    Instruction ins(kResinfo | (2u << 11));
+                    ins.words[0] |= 0x80000000u;
+                    ins.words.Push(0x800000C2u);
+                    ins.words.Push(ReturnTypeToken(m.globals[global].element));
+                    PutDst(ins, Whole(d));
+                    PutSrc(ins, ImmI(0), 0);
+                    PutStorage(ins, global, 0xE46u);
+                    Finish(ins);
+                    d.count = 2;
+                    return result(d);
+                }
                 case Intrinsic::TextureSize:
                 {
                     u32 slot = arg(0).imm[0];
@@ -1297,6 +1327,25 @@ namespace helix::shadercompiler
                 case ExprKind::Index:
                 {
                     Value whole, index;
+                    if (IsImage(in, e.a))
+                    {
+                        // A texel of a storage texture in one of the single 32 bit formats.
+                        if (!Eval(in, e.b, index))
+                            return false;
+                        u32 global = in.fn->exprs[e.a].index;
+                        Src d = NewTemp(4, IsFloat(e.type));
+                        Instruction ld(kLdUavTyped);
+                        ld.words[0] |= 0x80000000u;
+                        ld.words.Push(0x800000C2u);
+                        ld.words.Push(ReturnTypeToken(e.type));
+                        PutDst(ld, Whole(d));
+                        PutSrc(ld, index.parts[0]);
+                        PutStorage(ld, global, 0xE46u);
+                        Finish(ld);
+                        d.count = e.type.rows;
+                        out.parts.Push(d);
+                        return true;
+                    }
                     if (IsStorage(in, e.a))
                     {
                         if (!Eval(in, e.b, index))
@@ -1978,8 +2027,9 @@ namespace helix::shadercompiler
                     const Global& g = m.globals[global];
                     if (g.type.base == BaseType::Image)
                     {
-                        // A two dimensional texture of floats; the format belongs to the view that gets bound.
-                        u32 words[] = {kDclUavTyped | (3u << 11) | (4u << 24), 0x0011E000u, g.slot, 0x00005555u};
+                        // A two dimensional texture; the return type follows the texels, the format belongs to the bound view.
+                        u32 kind = g.element.base == BaseType::UInt ? 4u : g.element.base == BaseType::Int ? 3u : 5u;
+                        u32 words[] = {kDclUavTyped | (3u << 11) | (4u << 24), 0x0011E000u, g.slot, kind * 0x1111u};
                         body.Append(words, 4);
                         continue;
                     }

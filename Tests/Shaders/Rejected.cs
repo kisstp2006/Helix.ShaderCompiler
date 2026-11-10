@@ -37,6 +37,16 @@ public static class Rejected
         points[(int)id.x] = new float3(copy[0]);
     }
 
+    [Storage(2)] public static RWTexture2D<float4> colors;
+    [Storage(3, Format = StorageFormat.R32F)] public static RWTexture2D<uint> mismatched;
+
+    // RGBA8 texels cannot be read back by Direct3D 11.
+    [ComputeShader(1)]
+    public static void ReadsColors([DispatchThreadId] uint3 id) => colors[new int2(0, 0)] = colors[new int2(1, 0)];
+
+    [ComputeShader(1)]
+    public static void WrongFormat([DispatchThreadId] uint3 id) => mismatched[new int2(0, 0)] = 1u;
+
     [FragmentShader]
     public static float4 NoTarget([Location(0)] float2 uv) => new float4(uv, 0.0f, 1.0f);
 }

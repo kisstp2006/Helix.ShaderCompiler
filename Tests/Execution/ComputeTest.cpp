@@ -107,18 +107,24 @@ namespace
             {
                 TextureHandle texture;
                 const u8* expected;
-                u32 width, height, slot;
+                u32 width, height, slot, size;
+                // Rounded to 8 bits on both sides: the last bit may differ; other formats must be equal bit for bit.
+                bool rounded;
             };
             Array<Image> images;
             u32 imageCount = r.U32();
             for (u32 i = 0; i < imageCount; i++)
             {
-                u32 slot = r.U32(), width = r.U32(), height = r.U32();
-                const u8* after = r.Bytes(usize(width) * height * 4);
-                HX_REQUIRE(after != nullptr);
-                TextureHandle texture = d.CreateTexture({.format = rhi::Format::RGBA8Unorm, .width = width, .height = height, .usage = TextureStorage | TextureSampled});
+                u32 slot = r.U32(), width = r.U32(), height = r.U32(), format = r.U32(), bytes = r.U32();
+                const u8* before = r.Bytes(bytes);
+                const u8* after = r.Bytes(bytes);
+                static constexpr rhi::Format kFormats[] = {rhi::Format::Unknown,    rhi::Format::RGBA8Unorm, rhi::Format::RGBA16Float, rhi::Format::RGBA32Float,
+                                                           rhi::Format::R32Float,   rhi::Format::R32Uint,    rhi::Format::R32Sint};
+                HX_REQUIRE(before && after && format >= 1 && format <= 6);
+                TextureHandle texture = d.CreateTexture({.format = kFormats[format], .width = width, .height = height, .usage = TextureStorage | TextureSampled,
+                                                         .initialData = before});
                 HX_REQUIRE(texture.IsValid());
-                images.Push({texture, after, width, height, slot});
+                images.Push({texture, after, width, height, slot, bytes, format == 1});
             }
             struct Heap
             {
@@ -212,15 +218,14 @@ namespace
                 for (const Image& image : images)
                 {
                     Array<u8> pixels;
-                    pixels.Resize(usize(image.width) * image.height * 4);
+                    pixels.Resize(image.size);
                     u32 wrong = 0, first = 0;
                     if (d.ReadTexture(image.texture, 0, pixels.Data(), pixels.Size()))
                     {
-                        // Texels are rounded to 8 bits on both sides; allow the last bit.
                         for (usize i = 0; i < pixels.Size(); i++)
                         {
                             u32 diff = u32(pixels[i] > image.expected[i] ? pixels[i] - image.expected[i] : image.expected[i] - pixels[i]);
-                            if (diff > 1 && !wrong++)
+                            if (diff > (image.rounded ? 1u : 0u) && !wrong++)
                                 first = u32(i);
                         }
                     }
@@ -228,9 +233,8 @@ namespace
                         wrong = 1;
                     if (wrong)
                     {
-                        std::printf("    %s (%s): texture in slot %u has %u wrong channels, the first at texel (%u, %u) channel %u: GPU %u, CPU %u\n",
-                                    name.CStr(), direct3d ? "DXBC" : "GLSL 430", image.slot, wrong, first / 4 % image.width, first / 4 / image.width,
-                                    first % 4, u32(pixels[first]), u32(image.expected[first]));
+                        std::printf("    %s (%s): texture in slot %u has %u wrong bytes, the first at byte %u: GPU %u, CPU %u\n", name.CStr(),
+                                    direct3d ? "DXBC" : "GLSL 430", image.slot, wrong, first, u32(pixels[first]), u32(image.expected[first]));
                         ok = false;
                     }
                 }

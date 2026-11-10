@@ -191,14 +191,15 @@ vectors or bools, no holes; the error names the field.
 |---|---|---|
 | `[Storage(n)] RWStructuredBuffer<T> name` | `layout(std430, binding = n) buffer hx_buffer_name { T g_name[]; }` | raw buffer view `u<n>` |
 | `[Storage(n)] StructuredBuffer<T> name` | the same, `readonly` | raw buffer view `t<16 + n>` |
-| `[Storage(n, Format = f)] RWTexture2D name` | `layout(f, binding = n) writeonly uniform image2D g_name` | typed view `u<n>` |
-| `image[texel] = color` | `imageStore` | `store_uav_typed` |
+| `[Storage(n, Format = f)] RWTexture2D<T> name` | `layout(f, binding = n) uniform image2D g_name` (`uimage2D`, `iimage2D`; `writeonly` when never read) | typed view `u<n>` |
+| `image[texel] = value`, `image[texel]` | `imageStore`, `imageLoad` | `store_uav_typed`, `ld_uav_typed` |
 | `InterlockedAdd(buffer, index, value)` | `atomicAdd` | `imm_atomic_iadd` |
 | `[DispatchThreadId] uint3` | `gl_GlobalInvocationID` | `SV_DispatchThreadID` |
 
 Direct3D buffers are read and written through raw (byte address) views, with the element size multiplied in by the
 generated code. That way every buffer can be bound, also one that is a vertex buffer or holds indirect draw arguments,
-which cannot be structured buffers. A storage texture can only be written; `InterlockedAdd` works on buffers of `int` or
+which cannot be structured buffers. A storage texture is read only in the R32F, R32UI and R32I formats (Direct3D 11 reads no
+other typed views), and its format follows T unless the attribute names one; `InterlockedAdd` works on buffers of `int` or
 `uint` and returns the value before the add.
 
 ## Keywords and variants
@@ -276,7 +277,7 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
 - `double` is computed as `float`.
 
 Not available, each reported with the method name and the reason: classes and anything allocated, recursion, exceptions,
-`goto`, 64 bit integers, reading a storage texture, calls into other libraries.
+`goto`, 64 bit integers, calls into other libraries.
 Dynamic keywords (decided at run time) are not available yet.
 
 ## Conventions of the generated GLSL
@@ -317,8 +318,9 @@ cannot be indexed.
   agree within 2/255. They run on the OpenGL device and on every Direct3D 11 adapter the machine offers.
 - Direct3D container: chunks, sizes, signatures and registers of both stages, and that output is deterministic.
 - GLSL ES 3.00 output is checked as text only; it is not executed yet.
-- Compute: five kernels (a uniform and a buffer, structs between two buffers on a 2D grid, an in place update with a
-  helper that loops and returns early on a 3D grid, counters shared through atomic adds, a storage texture) run on the CPU and are dispatched as GLSL 4.30 and as Direct3D
+- Compute: seven kernels (a uniform and a buffer, structs between two buffers on a 2D grid, an in place update with a
+  helper that loops and returns early on a 3D grid, counters shared through atomic adds, a storage texture, bindless
+  buffers, storage textures read and written in R32F, R32UI, R32I and written in RGBA16F) run on the CPU and are dispatched as GLSL 4.30 and as Direct3D
   bytecode on every adapter; the buffers must be the same byte by byte, texels within the last bit.
 - Shadow maps: comparison sampling of a filtered 2D map, a layer of an array and a cube face, on D32 float textures.
 - Texture kinds: an eight layer array (sampled and loaded), a volume filtered in three dimensions, a cube read at texel centers

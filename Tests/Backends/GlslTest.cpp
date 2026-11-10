@@ -157,6 +157,12 @@ HX_TEST(Glsl, EmitsComputeShadersWithStorageBuffers)
     HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(rejected, "CopiesBuffer"), Stage::Compute, module, error));
     std::printf("    %s\n", error.CStr());
     HX_CHECK(StringView(error).Contains("directly"));
+    HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(rejected, "ReadsColors"), Stage::Compute, module, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("R32F, R32UI or R32I"));
+    HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(rejected, "WrongFormat"), Stage::Compute, module, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("does not fit"));
 }
 
 HX_TEST(Glsl, RejectsWhatTheGpuCannotRun)

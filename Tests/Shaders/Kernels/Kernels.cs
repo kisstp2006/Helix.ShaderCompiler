@@ -154,9 +154,9 @@ public static class Paint
 {
     public static readonly int3 Groups = new(2, 2, 1);
 
-    [Storage(0, Format = StorageFormat.RGBA8)] public static RWTexture2D image;
+    [Storage(0, Format = StorageFormat.RGBA8)] public static RWTexture2D<float4> image;
 
-    public static void Setup() => image = RWTexture2D.Create(16, 16);
+    public static void Setup() => image = RWTexture2D<float4>.Create(16, 16);
 
     [ComputeShader(8, 8)]
     public static void Run([DispatchThreadId] uint3 id)
@@ -202,5 +202,43 @@ public static class BindlessWrites
         // Even threads also write two words past the first 64, so no two threads write the same word.
         if ((id.x & 1u) == 0u)
             data.target.Store2(256u + offset, data.source.Load2(offset) + new uint2(1000u, data.target.Size));
+    }
+}
+
+/// <summary>Storage textures read and written in place, in the formats a shader can read, and one only written.</summary>
+public static class ImageReadWrite
+{
+    public static readonly int3 Groups = new(2, 2, 1);
+
+    [Storage(0)] public static RWTexture2D<float> heat;
+    [Storage(1)] public static RWTexture2D<uint> counts;
+    [Storage(2)] public static RWTexture2D<int> signs;
+    [Storage(3, Format = StorageFormat.RGBA16F)] public static RWTexture2D<float4> colors;
+
+    public static void Setup()
+    {
+        float[] heats = new float[256];
+        uint[] values = new uint[256];
+        for (int i = 0; i < 256; i++)
+        {
+            heats[i] = i * 0.25f;
+            values[i] = (uint)(i * 3);
+        }
+        heat = RWTexture2D<float>.FromTexels(heats, 16, 16);
+        counts = RWTexture2D<uint>.FromTexels(values, 16, 16);
+        signs = RWTexture2D<int>.Create(16, 16);
+        colors = RWTexture2D<float4>.Create(16, 16);
+    }
+
+    [ComputeShader(8, 8)]
+    public static void Run([DispatchThreadId] uint3 id)
+    {
+        int2 p = new int2((int)id.x, (int)id.y);
+        int2 size = heat.Size;
+        heat[p] = heat[p] * 2.0f + size.x;
+        uint count = counts[p] + id.x;
+        counts[p] = count;
+        signs[p] = -(int)id.y * 3 + (int)count;
+        colors[p] = new float4(id.x * 0.25f, id.y * 0.5f, 0.125f, 1.0f);
     }
 }

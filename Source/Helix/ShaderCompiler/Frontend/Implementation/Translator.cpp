@@ -34,11 +34,6 @@ namespace helix::shadercompiler
                 out = kUInt;
                 return true;
             }
-            if (name == "RWTexture2D")
-            {
-                out = Type::Scalar(BaseType::Image);
-                return true;
-            }
             if (name == "SamplerState" || name == "SamplerComparisonState")
             {
                 out = Type::Scalar(BaseType::Sampler);
@@ -239,6 +234,11 @@ namespace helix::shadercompiler
                     return true;
                 }
                 case ElementType::GenericInst:
+                    if (IsImageType(sig))
+                    {
+                        out = Type::Scalar(BaseType::Image);
+                        return true;
+                    }
                     if (BaseType texture = TextureType(sig); texture != BaseType::Void)
                     {
                         out = Type::Scalar(texture);
@@ -250,6 +250,14 @@ namespace helix::shadercompiler
                     return true;
                 default: return false;
                 }
+            }
+
+            // RWTexture2D<T> of the shader library.
+            bool IsImageType(const TypeSig& sig) const
+            {
+                StringView ns, name;
+                return sig.kind == ElementType::GenericInst && sig.args.Size() == 1 && a.TypeName(sig.token, ns, name) && ns == kLibrary &&
+                       name == "RWTexture2D`1";
             }
 
             // Texture2D<T>, Texture2DArray<T>, Texture3D<T> or TextureCube<T> of the shader library; Void for other types.
@@ -617,7 +625,8 @@ namespace helix::shadercompiler
                     if (image)
                     {
                         g.writable = true;
-                        g.element = Type::Vector(BaseType::Float, 4);
+                        if (!MapType(sig.args[0], &mt, g.element, byRef, mt.name))
+                            return Fail(mt.name, Format("storage texture {} has a texel type that shaders cannot use", field.name));
                         // The format is a named argument of the attribute.
                         Array<CustomAttribute> attributes;
                         a.Attributes(parent, attributes);
@@ -627,6 +636,19 @@ namespace helix::shadercompiler
                                 for (const AttributeArgument& n : named)
                                     if (n.name == "Format")
                                         g.format = StorageFormat(n.integer);
+                        // The format and the texel type must fit together; Auto follows the texel type.
+                        Type float4 = Type::Vector(BaseType::Float, 4);
+                        if (g.format == StorageFormat::Auto)
+                            g.format = g.element == kFloat ? StorageFormat::R32F : g.element == kUInt ? StorageFormat::R32UI : g.element == kInt ? StorageFormat::R32I
+                                                                                                                                              : StorageFormat::RGBA8;
+                        bool fits = g.format == StorageFormat::R32F    ? g.element == kFloat
+                                    : g.format == StorageFormat::R32UI ? g.element == kUInt
+                                    : g.format == StorageFormat::R32I  ? g.element == kInt
+                                                                       : g.element == float4;
+                        if (!fits)
+                            return Fail(mt.name, Format("storage texture {}: the texel type does not fit its format (float4 for RGBA formats, float for R32F, "
+                                                        "uint for R32UI, int for R32I)",
+                                                        field.name));
                     }
                     else if (k.kind == GlobalKind::Storage && (!IsBufferType(sig, &g.writable) || !MapType(sig.args[0], &mt, g.element, byRef, mt.name) ||
                                                           !(g.element.IsNumeric() || g.element.base == BaseType::Struct)))
@@ -691,6 +713,44 @@ namespace helix::shadercompiler
                 else
                     return Fail(mt.name, Format("Texture2D.{} is not available in shaders", member));
                 Push(mt, AddExpr(mt.fn, Move(e)));
+                return true;
+            }
+
+            // Members of RWTexture2D<T>: a texel is the Index expression of the image with an int2.
+            bool ImageCall(Method& mt, StringView member, Array<Item>& args)
+            {
+                const Expr& self = mt.fn.exprs[args[0].e];
+                if (self.kind != ExprKind::Global || m.globals[self.index].type.base != BaseType::Image)
+                    return Fail(mt.name, "a storage texture must be used directly from its static field");
+                Global& g = m.globals[self.index];
+                if (member == "get_Size")
+                {
+                    Expr e;
+                    e.kind = ExprKind::Intrinsic;
+                    e.intrinsic = Intrinsic::ImageSize;
+                    e.type = Type::Vector(BaseType::Int, 2);
+                    e.args.Push(args[0].e);
+                    Push(mt, AddExpr(mt.fn, Move(e)));
+                    return true;
+                }
+                if ((member != "get_Item" && member != "set_Item") || args.Size() < 2)
+                    return Fail(mt.name, Format("RWTexture2D.{} is not available in shaders", member));
+                Expr e;
+                e.kind = ExprKind::Index;
+                e.a = args[0].e;
+                e.b = Coerce(mt, args[1].e, Type::Vector(BaseType::Int, 2));
+                e.type = g.element;
+                ExprId texel = AddExpr(mt.fn, Move(e));
+                if (member == "set_Item")
+                {
+                    Assign(mt, texel, args[2].e);
+                    return true;
+                }
+                // Direct3D 11 reads typed storage textures only in the single 32 bit formats.
+                if (g.format != StorageFormat::R32F && g.format != StorageFormat::R32UI && g.format != StorageFormat::R32I)
+                    return Fail(mt.name, Format("storage texture {} is read, which needs the R32F, R32UI or R32I format", g.name));
+                g.readable = true;
+                Push(mt, texel);
                 return true;
             }
 
@@ -833,21 +893,6 @@ namespace helix::shadercompiler
                     }
                     return Fail(mt.name, Format("{}.{} is not available in shaders", typeName, member));
                 }
-                if (typeName == "RWTexture2D")
-                {
-                    const Expr& image = mt.fn.exprs[args[0].e];
-                    if (image.kind != ExprKind::Global || m.globals[image.index].type.base != BaseType::Image)
-                        return Fail(mt.name, "a storage texture must be used directly from its static field");
-                    if (member != "set_Item" || args.Size() != 3)
-                        return Fail(mt.name, Format("RWTexture2D.{} is not available in shaders; a storage texture can only be written", member));
-                    Expr e;
-                    e.kind = ExprKind::Index;
-                    e.a = args[0].e;
-                    e.b = Coerce(mt, args[1].e, Type::Vector(BaseType::Int, 2));
-                    e.type = Type::Vector(BaseType::Float, 4);
-                    Assign(mt, AddExpr(mt.fn, Move(e)), args[2].e);
-                    return true;
-                }
                 if (!LibraryType(typeName, self) || !self.IsNumeric())
                     return Fail(mt.name, Format("{}.{} is not available in shaders", typeName, member));
 
@@ -974,7 +1019,7 @@ namespace helix::shadercompiler
                 }
                 MethodSig sig;
                 StringView ns, typeName, member;
-                bool user = token.Is(Table::MethodDef), buffer = false, texture = false;
+                bool user = token.Is(Table::MethodDef), buffer = false, texture = false, image = false;
                 if (user)
                 {
                     MethodInfo info = a.Method(token.Row());
@@ -988,7 +1033,13 @@ namespace helix::shadercompiler
                     member = ref.name;
                     TypeSig spec;
                     bool generic = ref.parent.Is(Table::TypeSpec) && ParseTypeSpec(a.TypeSpecSignature(ref.parent.Row()), spec);
-                    if (generic && TextureType(spec) != BaseType::Void)
+                    if (generic && IsImageType(spec))
+                    {
+                        image = true;
+                        if (!ParseMethodSignature(ref.signature, sig))
+                            return Fail(mt.name, "damaged method signature");
+                    }
+                    else if (generic && TextureType(spec) != BaseType::Void)
                     {
                         texture = true;
                         if (!ParseMethodSignature(ref.signature, sig))
@@ -1018,6 +1069,8 @@ namespace helix::shadercompiler
                     return BufferCall(mt, member, args);
                 if (texture)
                     return TextureCall(mt, member, args);
+                if (image)
+                    return ImageCall(mt, member, args);
                 if (!user)
                 {
                     if (ns != kLibrary)

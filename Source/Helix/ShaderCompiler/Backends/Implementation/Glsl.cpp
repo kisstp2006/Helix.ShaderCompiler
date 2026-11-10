@@ -238,6 +238,11 @@ namespace helix::shadercompiler
                     out.Append(')');
                     return true;
                 }
+                case Intrinsic::ImageSize:
+                    out.Append("imageSize(");
+                    Value(e.args[0]);
+                    out.Append(')');
+                    return true;
                 case Intrinsic::TextureSize:
                     out.Append("textureSize(");
                     Value(e.args[0]);
@@ -383,6 +388,16 @@ namespace helix::shadercompiler
                         out.Append("xyzw"[e.swizzle[i]]);
                     break;
                 case ExprKind::Index:
+                    if (fn->exprs[e.a].type.base == BaseType::Image)
+                    {
+                        // A texel read from a storage texture; the load gives four components.
+                        out.Append("imageLoad(");
+                        Value(e.a);
+                        out.Append(", ");
+                        Value(e.b);
+                        out.Append(e.type.rows == 1 ? ").x" : ")");
+                        break;
+                    }
                     Value(e.a);
                     out.Append('[');
                     Value(e.b);
@@ -439,14 +454,17 @@ namespace helix::shadercompiler
                         const Expr& place = fn->exprs[s.a];
                         if (place.kind == ExprKind::Index && fn->exprs[place.a].type.base == BaseType::Image)
                         {
-                            // A texel of a storage texture.
+                            // A texel of a storage texture; imageStore takes four components whatever the format holds.
+                            Type element = m.globals[fn->exprs[place.a].index].element;
                             out.Append("imageStore(");
                             Value(place.a);
                             out.Append(", ");
                             Value(place.b);
                             out.Append(", ");
+                            if (element.rows < 4)
+                                FormatAppend(out, "{}(", element.base == BaseType::UInt ? "uvec4" : element.base == BaseType::Int ? "ivec4" : "vec4");
                             Value(s.b);
-                            out.Append(");\n");
+                            out.Append(element.rows < 4 ? "));\n" : ");\n");
                             break;
                         }
                         Value(s.a);
@@ -691,8 +709,10 @@ namespace helix::shadercompiler
                             return Fail(Format("storage buffer {} needs GLSL 4.30 or GLSL ES 3.10", g.name));
                         if (g.type.base == BaseType::Image)
                         {
-                            static constexpr const char* kFormats[] = {"rgba8", "rgba16f", "rgba32f", "r32f"};
-                            FormatAppend(out, "layout({}, binding = {}) writeonly uniform highp image2D g_{};\n", kFormats[u32(g.format) & 3], g.slot, g.name);
+                            static constexpr const char* kFormats[] = {"rgba8", "rgba8", "rgba16f", "rgba32f", "r32f", "r32ui", "r32i"};
+                            const char* prefix = g.element.base == BaseType::UInt ? "u" : g.element.base == BaseType::Int ? "i" : "";
+                            FormatAppend(out, "layout({}, binding = {}) {}uniform highp {}image2D g_{};\n", kFormats[u32(g.format) % 7], g.slot,
+                                         g.readable ? "" : "writeonly ", prefix, g.name);
                             continue;
                         }
                         if (!CheckBufferLayout(m, g.element, g.name, error))

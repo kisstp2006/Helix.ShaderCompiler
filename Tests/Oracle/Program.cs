@@ -27,7 +27,8 @@ namespace Helix.ShaderOracle;
 /// Kernel section, the compute tests of Helix.ShaderTests.Kernels: u32 kernelCount, then per kernel: u16 name length, name,
 /// 3 x u32 work group counts, u32 uniformCount { u32 slot, u32 byteCount, bytes }, u32 bufferCount { u32 slot, u32 writable,
 /// u32 stride, u32 byteCount, bytes before, bytes after (writable buffers only) }, u32 storageTextureCount { u32 slot,
-/// u32 width, u32 height, RGBA8 pixels after }.
+/// u32 width, u32 height, u32 format (the storage format: 1 RGBA8, 2 RGBA16F, 3 RGBA32F, 4 R32F, 5 R32UI, 6 R32I), u32 byteCount,
+/// texels before, texels after, as the format holds them }.
 /// </summary>
 internal static class Program
 {
@@ -149,6 +150,35 @@ internal static class Program
         }
     }
 
+    // The storage format of an RWTexture2D field, Auto resolved from the texel type as the compiler does it.
+    private static StorageFormat ImageFormat(FieldInfo f)
+    {
+        StorageFormat format = f.GetCustomAttribute<StorageAttribute>()!.Format;
+        if (format != StorageFormat.Auto)
+            return format;
+        Type t = f.FieldType.GetGenericArguments()[0];
+        return t == typeof(float) ? StorageFormat.R32F : t == typeof(uint) ? StorageFormat.R32UI : t == typeof(int) ? StorageFormat.R32I : StorageFormat.RGBA8;
+    }
+
+    // The texels of a storage texture as its GPU format holds them.
+    private static byte[] ImageBytes(FieldInfo f)
+    {
+        object image = f.GetValue(null)!;
+        Array texels = (Array)image.GetType().GetProperty("Texels")!.GetValue(image)!;
+        switch (ImageFormat(f))
+        {
+            case StorageFormat.RGBA8:
+                return ((float4[])texels).SelectMany(p => new[] { Quantize(p.x), Quantize(p.y), Quantize(p.z), Quantize(p.w) }).ToArray();
+            case StorageFormat.RGBA16F:
+                return ((float4[])texels).SelectMany(p => new[] { p.x, p.y, p.z, p.w })
+                    .SelectMany(v => BitConverter.GetBytes((Half)v)).ToArray();
+            default:
+                MethodInfo bytesOf = typeof(Program).GetMethod(nameof(ArrayBytes), BindingFlags.NonPublic | BindingFlags.Static)!
+                    .MakeGenericMethod(texels.GetType().GetElementType()!);
+                return (byte[])bytesOf.Invoke(null, new object[] { texels })!;
+        }
+    }
+
     private static int WriteKernels(BinaryWriter w, Assembly shaders)
     {
         List<(Type type, MethodInfo run)> kernels = shaders.GetTypes()
@@ -174,8 +204,10 @@ internal static class Program
             FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.Static);
             WriteUniforms(w, fields);
 
-            FieldInfo[] buffers = fields.Where(f => f.GetCustomAttribute<StorageAttribute>() != null && f.FieldType.IsGenericType).ToArray();
-            FieldInfo[] images = fields.Where(f => f.FieldType == typeof(RWTexture2D)).ToArray();
+            FieldInfo[] buffers = fields.Where(f => f.GetCustomAttribute<StorageAttribute>() != null && f.FieldType.IsGenericType &&
+                                                    f.FieldType.GetGenericTypeDefinition() != typeof(RWTexture2D<>)).ToArray();
+            FieldInfo[] images = fields.Where(f => f.FieldType.IsGenericType && f.FieldType.GetGenericTypeDefinition() == typeof(RWTexture2D<>)).ToArray();
+            List<byte[]> imagesBefore = images.Select(f => ImageBytes(f)).ToList();
             List<byte[]> before = buffers.Select(f => BufferBytes(f.GetValue(null)!).bytes).ToList();
             ComputeShaderAttribute size = run.GetCustomAttribute<ComputeShaderAttribute>()!;
             object[] arguments = new object[1];
@@ -200,14 +232,18 @@ internal static class Program
                     w.Write(after);
             }
             w.Write((uint)images.Length);
-            foreach (FieldInfo f in images)
+            for (int i = 0; i < images.Length; i++)
             {
-                RWTexture2D image = (RWTexture2D)f.GetValue(null)!;
-                w.Write((uint)f.GetCustomAttribute<StorageAttribute>()!.Slot);
-                w.Write((uint)image.Size.x);
-                w.Write((uint)image.Size.y);
-                foreach (float4 pixel in image.Pixels!)
-                    WritePixel(w, pixel);
+                object image = images[i].GetValue(null)!;
+                int2 extent = (int2)image.GetType().GetProperty("Size")!.GetValue(image)!;
+                w.Write((uint)images[i].GetCustomAttribute<StorageAttribute>()!.Slot);
+                w.Write((uint)extent.x);
+                w.Write((uint)extent.y);
+                w.Write((uint)ImageFormat(images[i]));
+                byte[] after = ImageBytes(images[i]);
+                w.Write((uint)after.Length);
+                w.Write(imagesBefore[i]);
+                w.Write(after);
             }
             w.Write((uint)bindlessBefore.Count);
             for (int i = 0; i < bindlessBefore.Count; i++)

@@ -202,7 +202,7 @@ public static class Fill
 /// <summary>A gradient into a storage texture.</summary>
 public static class Gradient
 {
-    [Storage(0)] public static RWTexture2D image;
+    [Storage(0)] public static RWTexture2D<float4> image;
 
     [ComputeShader(8, 8)]
     public static void Compute([DispatchThreadId] uint3 id) =>
