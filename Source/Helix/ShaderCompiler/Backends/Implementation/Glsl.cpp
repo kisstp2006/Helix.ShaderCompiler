@@ -33,7 +33,7 @@ namespace helix::shadercompiler
                 static constexpr const char* kVector[] = {"", "bvec", "ivec", "uvec", "vec"};
                 if (t.base == BaseType::Struct)
                     return Format("S_{}_{}", m.structs[t.structIndex].name, u32(t.structIndex));
-                if (t.base == BaseType::Texture2D)
+                if (t.IsTexture())
                     return String("sampler2D");
                 if (t.IsMatrix())
                     return Format("mat{}", u32(t.rows));
@@ -680,10 +680,15 @@ namespace helix::shadercompiler
                     }
                     else if (g.kind == GlobalKind::Texture)
                     {
-                        // Integer texels need the integer sampler kinds, which GLSL ES has no default precision for.
-                        const char* kind = g.element.base == BaseType::Int ? "isampler2D" : g.element.base == BaseType::UInt ? "usampler2D" : "sampler2D";
+                        // GLSL ES has default precisions only for float sampler2D and samplerCube.
+                        const char* prefix = g.element.base == BaseType::Int ? "i" : g.element.base == BaseType::UInt ? "u" : "";
+                        const char* shape = g.type.base == BaseType::Texture2DArray ? "2DArray"
+                                            : g.type.base == BaseType::Texture3D  ? "3D"
+                                            : g.type.base == BaseType::TextureCube ? "Cube"
+                                                                                  : "2D";
                         bool es = target == GlslTarget::Essl300 || target == GlslTarget::Essl310;
-                        FormatAppend(out, "uniform {}{} g_{};\n", es && g.element.base != BaseType::Float ? "highp " : "", kind, g.name);
+                        bool defaulted = g.element.base == BaseType::Float && (g.type.base == BaseType::Texture2D || g.type.base == BaseType::TextureCube);
+                        FormatAppend(out, "uniform {}{}sampler{} g_{};\n", es && !defaulted ? "highp " : "", prefix, shape, g.name);
                         shader.bindings.Push({Format("g_{}", g.name), GlobalKind::Texture, g.slot});
                     }
                 }

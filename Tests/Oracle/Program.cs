@@ -14,7 +14,8 @@ namespace Helix.ShaderOracle;
 ///
 /// File layout (little endian): u32 size, u32 caseCount, u32 offset of the kernel section, then per case: u16 name length, name, size * size RGBA8 pixels
 /// (rows top first), u32 uniformCount { u32 slot, u32 byteCount, bytes }, u32 textureCount { u32 slot, u32 width,
-/// u32 height, u32 filter, u32 address, u32 format, u32 byteCount, texels }, u32 keywordCount { u16 name length, name, i32 value }.
+/// u32 height, u32 depth (layers, 6 for a cube), u32 kind (0 2D, 1 array, 2 volume, 3 cube), u32 filter, u32 address, u32 format,
+/// u32 byteCount, texels }, u32 keywordCount { u16 name length, name, i32 value }.
 /// Formats: 0 RGBA8 (float4 texels, rounded to 8 bits), 1 R32 float, 2 RG32 float, 3 R32 uint, 4 RG32 uint, 5 RGBA32 uint,
 /// 6 R32 int, 7 RG32 int, 8 RGBA32 int.
 /// Then per case: u32 bindlessTextureCount { the same as a texture without the slot }, u32
@@ -101,14 +102,19 @@ internal static class Program
     private static void WriteTexture(BinaryWriter w, object texture, SamplerState sampler)
     {
         Type type = texture.GetType();
-        int2 size = (int2)type.GetProperty("Size")!.GetValue(texture)!;
+        object size = type.GetProperty("Size")!.GetValue(texture)!;
         Array texels = (Array)type.GetProperty("Texels")!.GetValue(texture)!;
         Type element = type.GetGenericArguments()[0];
         int format = Array.IndexOf(TexelTypes, element);
         if (format < 0)
             throw new InvalidOperationException($"no test format for {element.Name} texels");
-        w.Write((uint)size.x);
-        w.Write((uint)size.y);
+        string[] kinds = { "Texture2D`1", "Texture2DArray`1", "Texture3D`1", "TextureCube`1" };
+        int kind = Array.IndexOf(kinds, type.Name);
+        (int x, int y, int z) dims = size is int3 s3 ? (s3.x, s3.y, s3.z) : size is int2 s2 ? (s2.x, s2.y, kind == 3 ? 6 : 1) : (0, 0, 0);
+        w.Write((uint)dims.x);
+        w.Write((uint)dims.y);
+        w.Write((uint)dims.z);
+        w.Write((uint)kind);
         w.Write((uint)sampler.Filter);
         w.Write((uint)sampler.Address);
         w.Write((uint)format);

@@ -168,13 +168,17 @@ void RunCases(Device& d, bool direct3d)
         u32 textureCount = r.U32();
         for (u32 t = 0; t < textureCount; t++)
         {
-            u32 slot = r.U32(), width = r.U32(), height = r.U32(), filter = r.U32(), address = r.U32(), format = r.U32(), bytes = r.U32();
+            u32 slot = r.U32(), width = r.U32(), height = r.U32(), depth = r.U32(), kind = r.U32(), filter = r.U32(), address = r.U32();
+            u32 format = r.U32(), bytes = r.U32();
             const u8* texels = r.Bytes(bytes);
-            HX_REQUIRE(texels != nullptr && TestFormat(format) != rhi::Format::Unknown);
-            textures.Push(d.CreateTexture({.format = TestFormat(format), .width = width, .height = height, .initialData = texels}));
+            HX_REQUIRE(texels != nullptr && TestFormat(format) != rhi::Format::Unknown && kind < 4);
+            const TextureType kTypes[] = {TextureType::Texture2D, TextureType::Texture2DArray, TextureType::Texture3D, TextureType::TextureCube};
+            textures.Push(d.CreateTexture({.type = kTypes[kind], .format = TestFormat(format), .width = width, .height = height,
+                                           .depthOrLayers = kind == 3 ? 1u : depth, .initialData = texels}));
+            HX_REQUIRE(textures.Back().IsValid());
             Filter f = filter == 1 ? Filter::Linear : Filter::Nearest;
             AddressMode mode = address == 1 ? AddressMode::ClampToEdge : AddressMode::Repeat;
-            samplers.Push(d.CreateSampler({.minFilter = f, .magFilter = f, .mipFilter = Filter::Nearest, .addressU = mode, .addressV = mode}));
+            samplers.Push(d.CreateSampler({.minFilter = f, .magFilter = f, .mipFilter = Filter::Nearest, .addressU = mode, .addressV = mode, .addressW = mode}));
             bind.SetTexture(slot, textures.Back(), samplers.Back());
         }
 
@@ -207,9 +211,10 @@ void RunCases(Device& d, bool direct3d)
         u32 bindlessTextureCount = r.U32();
         for (u32 t = 0; t < bindlessTextureCount; t++)
         {
-            u32 width = r.U32(), height = r.U32(), filter = r.U32(), address = r.U32(), format = r.U32(), bytes = r.U32();
+            u32 width = r.U32(), height = r.U32(), depth = r.U32(), kind = r.U32(), filter = r.U32(), address = r.U32();
+            u32 format = r.U32(), bytes = r.U32();
             const u8* pixels = r.Bytes(bytes);
-            HX_REQUIRE(pixels != nullptr && format == 0);
+            HX_REQUIRE(pixels != nullptr && format == 0 && kind == 0 && depth == 1);
             skip = skip || !d.Caps().bindlessTextures;
             if (skip)
                 continue;

@@ -904,7 +904,7 @@ namespace helix::shadercompiler
                         args.Push(Move(v));
                         continue;
                     }
-                    if (arg.type.base == BaseType::Texture2D)
+                    if (arg.type.IsTexture())
                     {
                         // Textures are named by their slot; they have no value of their own.
                         if (arg.kind != ExprKind::Global)
@@ -1095,16 +1095,16 @@ namespace helix::shadercompiler
                 {
                     u32 slot = arg(0).imm[0];
                     UseTexture(slot);
-                    // The coordinate is (x, y, mip, unused).
+                    // The texel (two or three components) and the mip level, which ld always takes from w.
                     Src coord = NewTemp(4, false);
-                    Dst xy = Whole(coord);
-                    xy.count = 2;
-                    Store(xy, arg(1));
-                    Dst zw = Whole(coord);
-                    zw.comps[0] = 2;
-                    zw.comps[1] = 3;
-                    zw.count = 2;
-                    Store(zw, Pick(arg(2), 0, 0, 0, 0, 2));
+                    Store(Whole(coord), ImmI(0, 4));
+                    Dst position = Whole(coord);
+                    position.count = arg(1).count;
+                    Store(position, arg(1));
+                    Dst mip = Whole(coord);
+                    mip.comps[0] = 3;
+                    mip.count = 1;
+                    Store(mip, arg(2));
                     Src d = NewTemp(4, IsFloat(rt));
                     Instruction ins(kLd);
                     PutDst(ins, Whole(d));
@@ -1197,7 +1197,7 @@ namespace helix::shadercompiler
                     ins.words.Push(0x00107E46u);
                     ins.words.Push(slot);
                     Finish(ins);
-                    d.count = 2;
+                    d.count = rt.rows;
                     return result(d);
                 }
                 default: return Fail(Format("the function {} is not supported by the Direct3D backend yet", IntrinsicName(e.intrinsic)));
@@ -1919,12 +1919,16 @@ namespace helix::shadercompiler
                 }
                 for (u32 slot : textures)
                 {
-                    // The return type of every component: 5 float, 3 signed, 4 unsigned integer.
-                    u32 kind = 5;
+                    // The return type of every component (5 float, 3 signed, 4 unsigned integer) and the dimension (3 2D,
+                    // 8 2D array, 5 volume, 6 cube).
+                    u32 kind = 5, dimension = 3;
                     for (const Global& g : m.globals)
                         if (g.kind == GlobalKind::Texture && g.slot == slot)
+                        {
                             kind = g.element.base == BaseType::Int ? 3u : g.element.base == BaseType::UInt ? 4u : 5u;
-                    u32 words[] = {kDclSampler | (3u << 24), 0x00106000u, slot, kDclResource | (3u << 11) | (4u << 24), 0x00107000u, slot, kind * 0x1111u};
+                            dimension = g.type.base == BaseType::Texture2DArray ? 8u : g.type.base == BaseType::Texture3D ? 5u : g.type.base == BaseType::TextureCube ? 6u : 3u;
+                        }
+                    u32 words[] = {kDclSampler | (3u << 24), 0x00106000u, slot, kDclResource | (dimension << 11) | (4u << 24), 0x00107000u, slot, kind * 0x1111u};
                     body.Append(words, 7);
                 }
                 if (bindless.textures)

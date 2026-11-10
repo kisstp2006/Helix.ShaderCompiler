@@ -77,10 +77,21 @@ namespace helix::shadercompiler
                 return false;
             if (sig.kind == ElementType::GenericInst)
             {
-                if (!name.StartsWith("Texture2D"))
-                    return false;
-                out = Type::Scalar(BaseType::Texture2D);
-                return true;
+                static constexpr struct
+                {
+                    StringView name;
+                    BaseType base;
+                } kTextures[] = {{"Texture2D`1", BaseType::Texture2D},
+                                 {"Texture2DArray`1", BaseType::Texture2DArray},
+                                 {"Texture3D`1", BaseType::Texture3D},
+                                 {"TextureCube`1", BaseType::TextureCube}};
+                for (const auto& t : kTextures)
+                    if (name == t.name)
+                    {
+                        out = Type::Scalar(t.base);
+                        return true;
+                    }
+                return false;
             }
             static constexpr struct
             {
@@ -165,7 +176,7 @@ namespace helix::shadercompiler
                     return Fail(shader, Format("property {} has a type materials cannot hold; use a number, a vector, a matrix or Texture2D", field.name));
                 if (shader.FindProperty(p.name))
                     return Fail(shader, Format("property {} is declared twice", field.name));
-                bool texture = p.type.base == BaseType::Texture2D;
+                bool texture = p.type.IsTexture();
                 if (const Attribute* range = Find(attributes, "RangeAttribute"); range && range->fixed.Size() == 2)
                 {
                     if (!p.type.IsScalar() || texture)

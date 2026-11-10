@@ -659,3 +659,71 @@ public static class TypedTextures
         return new float4(h * 0.5f + o.x * 0.5f, id / 255.0f * 0.5f + a * 0.5f, b * 0.5f + c * 0.25f + o.y * 0.25f, size.x / 2.0f);
     }
 }
+
+/// <summary>A texture array, a volume and a cube; the cube is read at texel centers, so filtering across faces never matters.</summary>
+public static class TextureKinds
+{
+    [Texture(0)] public static Texture2DArray<float4> layers;
+    [Sampler(0)] public static SamplerState layerSampler;
+    [Texture(1)] public static Texture3D<float4> volume;
+    [Sampler(1)] public static SamplerState volumeSampler;
+    [Texture(2)] public static TextureCube<float4> sky;
+    [Sampler(2)] public static SamplerState skySampler;
+    [Texture(3)] public static Texture2DArray<uint> codes;
+
+    private static float4 Color(int i) => new float4((i * 37 % 256) / 255.0f, (i * 91 % 256) / 255.0f, (i * 53 % 256) / 255.0f, 1.0f);
+
+    public static void Setup()
+    {
+        float4[] layerTexels = new float4[4 * 4 * 8];
+        for (int i = 0; i < layerTexels.Length; i++)
+            layerTexels[i] = Color(i);
+        layers = Texture2DArray<float4>.FromTexels(layerTexels, 4, 4, 8);
+        layerSampler = new SamplerState { Filter = SamplerFilter.Nearest, Address = SamplerAddress.Repeat };
+        float4[] volumeTexels = new float4[4 * 4 * 4];
+        for (int i = 0; i < volumeTexels.Length; i++)
+            volumeTexels[i] = Color(i + 7);
+        volume = Texture3D<float4>.FromTexels(volumeTexels, 4, 4, 4);
+        volumeSampler = new SamplerState { Filter = SamplerFilter.Linear, Address = SamplerAddress.Clamp };
+        float4[] faces = new float4[4 * 4 * 6];
+        for (int i = 0; i < faces.Length; i++)
+            faces[i] = Color(i + 100);
+        sky = TextureCube<float4>.FromTexels(faces, 4);
+        skySampler = new SamplerState { Filter = SamplerFilter.Nearest, Address = SamplerAddress.Clamp };
+        uint[] codeTexels = new uint[2 * 2 * 2];
+        for (int i = 0; i < codeTexels.Length; i++)
+            codeTexels[i] = (uint)(i * 31 + 5);
+        codes = Texture2DArray<uint>.FromTexels(codeTexels, 2, 2, 2);
+    }
+
+    // A direction that hits the center of texel (i, j) of a face, by the face rules of cube textures.
+    private static float3 Direction(int face, int i, int j)
+    {
+        float sc = (i + 0.5f) / 2.0f - 1.0f, tc = (j + 0.5f) / 2.0f - 1.0f;
+        switch (face)
+        {
+            case 0: return new float3(1.0f, -tc, -sc);
+            case 1: return new float3(-1.0f, -tc, sc);
+            case 2: return new float3(sc, 1.0f, tc);
+            case 3: return new float3(sc, -1.0f, -tc);
+            case 4: return new float3(sc, -tc, 1.0f);
+            default: return new float3(-sc, -tc, -1.0f);
+        }
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        int x = (int)(uv.x * 16.0f), y = (int)(uv.y * 16.0f);
+        float4 a = layers.Sample(layerSampler, new float3(uv, (float)(y / 2)));
+        float4 b = layers.Load(new int3(x / 4, y / 4, x % 8), 0);
+        float4 c = volume.Sample(volumeSampler, new float3(uv.x, uv.y, 0.3f + uv.x * 0.4f));
+        float4 d = sky.SampleLevel(skySampler, Direction((x + y) % 6, x % 4, y % 4), 0.0f);
+        uint code = codes.Load(new int3(x % 2, y % 2, (x / 8) % 2), 0);
+        int3 layerSize = layers.Size, volumeSize = volume.Size;
+        int2 skySize = sky.Size;
+        float sizes = (layerSize.x + layerSize.z + volumeSize.z + skySize.y) / 20.0f;
+        return new float4(a.x * 0.5f + b.y * 0.5f, c.y * 0.5f + d.z * 0.5f, d.x * 0.5f + code / 255.0f * 0.5f, sizes);
+    }
+}

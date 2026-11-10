@@ -14,6 +14,9 @@ namespace helix::shadercompiler
         Float,
         Struct,
         Texture2D,
+        Texture2DArray,
+        Texture3D,
+        TextureCube,
         Sampler,
         // A storage buffer: an array of elements, indexed with the Index expression. The element type is in its Global.
         Buffer,
@@ -42,6 +45,10 @@ namespace helix::shadercompiler
         constexpr bool IsMatrix() const { return cols > 1; }
         constexpr bool IsInteger() const { return base == BaseType::Int || base == BaseType::UInt; }
         constexpr Type ScalarType() const { return Scalar(base); }
+        constexpr bool IsTexture() const
+        {
+            return base == BaseType::Texture2D || base == BaseType::Texture2DArray || base == BaseType::Texture3D || base == BaseType::TextureCube;
+        }
     };
 
     inline constexpr Type kVoid = Type::Scalar(BaseType::Void);

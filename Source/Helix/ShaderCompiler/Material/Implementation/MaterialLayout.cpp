@@ -17,6 +17,9 @@ namespace helix::shadercompiler
             case BaseType::UInt: return "uint";
             case BaseType::Float: return "float";
             case BaseType::Texture2D: return "Texture2D";
+            case BaseType::Texture2DArray: return "Texture2DArray";
+            case BaseType::Texture3D: return "Texture3D";
+            case BaseType::TextureCube: return "TextureCube";
             default: return "struct";
             }
         }
@@ -98,7 +101,7 @@ namespace helix::shadercompiler
         for (u32 p = 0; p < shader.properties.Size(); p++)
         {
             const ShaderProperty& property = shader.properties[p];
-            bool texture = property.type.base == BaseType::Texture2D, used = false;
+            bool texture = property.type.IsTexture(), used = false;
             String tiling = Format("{}_ST", property.name);
             for (usize b = 0; b < pass.blocks.Size(); b++)
             {

@@ -239,9 +239,9 @@ namespace helix::shadercompiler
                     return true;
                 }
                 case ElementType::GenericInst:
-                    if (IsTextureType(sig))
+                    if (BaseType texture = TextureType(sig); texture != BaseType::Void)
                     {
-                        out = Type::Scalar(BaseType::Texture2D);
+                        out = Type::Scalar(texture);
                         return true;
                     }
                     if (!IsBufferType(sig))
@@ -252,12 +252,24 @@ namespace helix::shadercompiler
                 }
             }
 
-            // Texture2D<T> of the shader library.
-            bool IsTextureType(const TypeSig& sig) const
+            // Texture2D<T>, Texture2DArray<T>, Texture3D<T> or TextureCube<T> of the shader library; Void for other types.
+            BaseType TextureType(const TypeSig& sig) const
             {
                 StringView ns, name;
-                return sig.kind == ElementType::GenericInst && sig.args.Size() == 1 && a.TypeName(sig.token, ns, name) && ns == kLibrary &&
-                       name.StartsWith("Texture2D");
+                if (sig.kind != ElementType::GenericInst || sig.args.Size() != 1 || !a.TypeName(sig.token, ns, name) || ns != kLibrary)
+                    return BaseType::Void;
+                static constexpr struct
+                {
+                    StringView name;
+                    BaseType base;
+                } kTextures[] = {{"Texture2D`1", BaseType::Texture2D},
+                                 {"Texture2DArray`1", BaseType::Texture2DArray},
+                                 {"Texture3D`1", BaseType::Texture3D},
+                                 {"TextureCube`1", BaseType::TextureCube}};
+                for (const auto& t : kTextures)
+                    if (name == t.name)
+                        return t.base;
+                return BaseType::Void;
             }
 
             // StructuredBuffer<T> or RWStructuredBuffer<T> of the shader library.
@@ -592,7 +604,7 @@ namespace helix::shadercompiler
                     bool byRef = false;
                     if (!ParseFieldSignature(field.signature, sig) || !MapType(sig, &mt, g.type, byRef, mt.name))
                         return Fail(mt.name, Format("resource {} has a type that shaders cannot use", field.name));
-                    if (g.type.base == BaseType::Texture2D)
+                    if (g.type.IsTexture())
                     {
                         // The texel type: float, int or uint, one to four components.
                         if (sig.kind != ElementType::GenericInst || !MapType(sig.args[0], &mt, g.element, byRef, mt.name) || !g.element.IsNumeric() ||
@@ -634,9 +646,12 @@ namespace helix::shadercompiler
             bool TextureCall(Method& mt, StringView member, Array<Item>& args)
             {
                 const Expr& self = mt.fn.exprs[args[0].e];
-                if (self.kind != ExprKind::Global || m.globals[self.index].type.base != BaseType::Texture2D)
+                if (self.kind != ExprKind::Global || !m.globals[self.index].type.IsTexture())
                     return Fail(mt.name, "a texture must be used directly from its static field");
                 Type element = m.globals[self.index].element;
+                BaseType kind = m.globals[self.index].type.base;
+                // Coordinates: two for 2D textures, three for arrays (the layer), volumes and cubes (a direction).
+                u32 coordinates = kind == BaseType::Texture2D ? 2u : 3u;
                 Expr e;
                 e.kind = ExprKind::Intrinsic;
                 e.type = element;
@@ -646,20 +661,20 @@ namespace helix::shadercompiler
                     if (element.base != BaseType::Float)
                         return Fail(mt.name, Format("{} has integer texels and cannot be sampled; use Load", m.globals[self.index].name));
                     e.intrinsic = member == "Sample" ? Intrinsic::TextureSample : Intrinsic::TextureSampleLevel;
-                    e.args.Push(Coerce(mt, args[2].e, Type::Vector(BaseType::Float, 2)));
+                    e.args.Push(Coerce(mt, args[2].e, Type::Vector(BaseType::Float, coordinates)));
                     if (args.Size() > 3)
                         e.args.Push(Coerce(mt, args[3].e, kFloat));
                 }
-                else if (member == "Load" && args.Size() == 3)
+                else if (member == "Load" && args.Size() == 3 && kind != BaseType::TextureCube)
                 {
                     e.intrinsic = Intrinsic::TextureLoad;
-                    e.args.Push(Coerce(mt, args[1].e, Type::Vector(BaseType::Int, 2)));
+                    e.args.Push(Coerce(mt, args[1].e, Type::Vector(BaseType::Int, coordinates)));
                     e.args.Push(Coerce(mt, args[2].e, kInt));
                 }
                 else if (member == "get_Size")
                 {
                     e.intrinsic = Intrinsic::TextureSize;
-                    e.type = Type::Vector(BaseType::Int, 2);
+                    e.type = Type::Vector(BaseType::Int, kind == BaseType::Texture2D || kind == BaseType::TextureCube ? 2u : 3u);
                 }
                 else
                     return Fail(mt.name, Format("Texture2D.{} is not available in shaders", member));
@@ -961,7 +976,7 @@ namespace helix::shadercompiler
                     member = ref.name;
                     TypeSig spec;
                     bool generic = ref.parent.Is(Table::TypeSpec) && ParseTypeSpec(a.TypeSpecSignature(ref.parent.Row()), spec);
-                    if (generic && IsTextureType(spec))
+                    if (generic && TextureType(spec) != BaseType::Void)
                     {
                         texture = true;
                         if (!ParseMethodSignature(ref.signature, sig))

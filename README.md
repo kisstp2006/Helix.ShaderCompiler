@@ -269,8 +269,8 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
 - Static methods, generic methods, `ref`, `out` and `in` parameters, ref locals, methods of user structs.
 - Vector components and matrix columns by index (`v[i]`, `m[i]`), also written at computed positions.
 - `if`, `for`, `while`, `do`, `switch`, `break`, `continue`, early `return`, `?:`, `&&`, `||`.
-- The functions of `ShaderMath`, `Texture2D<T>` with float, int or uint texels (`Sample` and `SampleLevel` for float texels,
-  `Load`, `Size`), and uniform structs, textures and samplers
+- The functions of `ShaderMath`, `Texture2D<T>`, `Texture2DArray<T>`, `Texture3D<T>` and `TextureCube<T>` with float, int or uint
+  texels (`Sample` and `SampleLevel` for float texels, `Load` except on cubes, `Size`), and uniform structs, textures and samplers
   declared as static fields.
 - `double` is computed as `float`.
 
@@ -319,6 +319,8 @@ cannot be indexed.
 - Compute: five kernels (a uniform and a buffer, structs between two buffers on a 2D grid, an in place update with a
   helper that loops and returns early on a 3D grid, counters shared through atomic adds, a storage texture) run on the CPU and are dispatched as GLSL 4.30 and as Direct3D
   bytecode on every adapter; the buffers must be the same byte by byte, texels within the last bit.
+- Texture kinds: an eight layer array (sampled and loaded), a volume filtered in three dimensions, a cube read at texel centers
+  of all six faces, and an integer array.
 - Typed textures: float, float2, uint, uint2, int and int4 textures, sampled or loaded, in 32 bit formats on the GPU.
 - Indexed writes: vector components and matrix columns written and read at positions computed per pixel.
 - Stage values: a case reads `[FrontFacing]` (drawn once per winding into the two halves of the target) and a case writes
