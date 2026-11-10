@@ -104,11 +104,25 @@ namespace helix::shadercompiler
             // Rows are per assembly; types are told apart by both.
             u64 Key(u32 row) const { return (u64(current) << 32) | row; }
 
+            // Runs f with `assembly` as the current assembly.
+            template <typename F>
+            auto InAssembly(u32 assembly, F&& f)
+            {
+                const Assembly* saved = a;
+                u32 savedIndex = current;
+                a = assemblies[assembly];
+                current = assembly;
+                auto result = f();
+                a = saved;
+                current = savedIndex;
+                return result;
+            }
+
             Array<u64> structRows;
             Array<u64> arrayRows;
             struct FieldGlobal
             {
-                u32 fieldRow;
+                u64 fieldRow;
                 i32 global;
             };
             Array<FieldGlobal> fieldGlobals;
@@ -352,26 +366,15 @@ namespace helix::shadercompiler
                         return false;
                     if (ns == kLibrary)
                         return LibraryType(name, out);
-                    if (!sig.token.Is(Table::TypeDef))
-                        return false;
-                    if (IsEnum(sig.token.Row()))
+                    // A struct of an included assembly is read in that assembly.
+                    u32 assembly = current, row = 0;
+                    if (!ResolveType(sig.token, assembly, row))
                     {
-                        out = kInt;
-                        return true;
-                    }
-                    if (u32 length = InlineArrayLength(sig.token.Row()))
-                    {
-                        i32 array = ArrayFor(sig.token.Row(), length, where);
-                        if (array < 0)
-                            return false;
-                        out = Type::ArrayOf(u32(array));
-                        return true;
-                    }
-                    i32 index = StructFor(sig.token.Row(), where);
-                    if (index < 0)
+                        if (sig.token.Is(Table::TypeRef))
+                            Fail(where, Format("type {}.{} comes from an assembly that is not among TranslateOptions::references", ns, name));
                         return false;
-                    out = Type::Struct(u32(index));
-                    return true;
+                    }
+                    return InAssembly(assembly, [&] { return MapValueType(row, out, where); });
                 }
                 case ElementType::Class:
                 {
@@ -502,6 +505,29 @@ namespace helix::shadercompiler
                 for (usize i = 1; i < args.Size(); i++)
                     callArgs.Push(args[i]);
                 return UserCall(mt, d.assembly, d.target, d.typeArgs, callArgs);
+            }
+
+            // An enum, inline array or struct defined in the current assembly.
+            bool MapValueType(u32 row, Type& out, StringView where)
+            {
+                if (IsEnum(row))
+                {
+                    out = kInt;
+                    return true;
+                }
+                if (u32 length = InlineArrayLength(row))
+                {
+                    i32 array = ArrayFor(row, length, where);
+                    if (array < 0)
+                        return false;
+                    out = Type::ArrayOf(u32(array));
+                    return true;
+                }
+                i32 index = StructFor(row, where);
+                if (index < 0)
+                    return false;
+                out = Type::Struct(u32(index));
+                return true;
             }
 
             // System.Span<T> or System.ReadOnlySpan<T>, which the C# compiler uses to index inline arrays.
@@ -825,6 +851,27 @@ namespace helix::shadercompiler
                     member = ref.name;
                     if (!a->TypeName(ref.parent, ns, typeName))
                         return Fail(mt.name, Format("field {} of a type that shaders cannot use", member));
+                    u32 assembly = current, typeRow = 0;
+                    if (ns != kLibrary && ResolveType(ref.parent, assembly, typeRow))
+                    {
+                        // A field of a struct of an included assembly.
+                        i32 index = InAssembly(assembly, [&] { return StructFor(typeRow, mt.name); });
+                        if (index < 0)
+                            return false;
+                        const StructType& s = m.structs[usize(index)];
+                        for (usize i = 0; i < s.fields.Size(); i++)
+                            if (StringView(s.fields[i].name) == member)
+                            {
+                                Expr e;
+                                e.kind = ExprKind::Field;
+                                e.a = object;
+                                e.index = u32(i);
+                                e.type = s.fields[i].type;
+                                out = AddExpr(mt.fn, Move(e));
+                                return true;
+                            }
+                        return Fail(mt.name, Format("unknown field {}.{}", typeName, member));
+                    }
                 }
                 else
                     return Fail(mt.name, "unsupported field reference");
@@ -847,8 +894,19 @@ namespace helix::shadercompiler
             // Static fields are resources (uniform block, texture, sampler) or keywords.
             bool StaticField(Method& mt, Token token, Item& out)
             {
-                if (!token.Is(Table::Field) || current != 0)
-                    return Fail(mt.name, "static fields of other assemblies are not available in shaders");
+                if (token.Is(Table::MemberRef))
+                {
+                    // A resource or keyword declared in an included assembly.
+                    MemberRefInfo ref = a->MemberRef(token.Row());
+                    u32 assembly = current, typeRow = 0, fieldRow = 0;
+                    if (ResolveType(ref.parent, assembly, typeRow))
+                        fieldRow = assemblies[assembly]->FindField(typeRow, ref.name);
+                    if (!fieldRow)
+                        return Fail(mt.name, Format("static field {} of an assembly that is not among the references", ref.name));
+                    return InAssembly(assembly, [&] { return StaticField(mt, Token(Table::Field, fieldRow), out); });
+                }
+                if (!token.Is(Table::Field))
+                    return Fail(mt.name, "unsupported static field reference");
                 u32 row = token.Row();
                 Token parent(Table::Field, row);
                 FieldInfo field = a->Field(row);
@@ -878,7 +936,7 @@ namespace helix::shadercompiler
                     return true;
                 }
                 for (const FieldGlobal& g : fieldGlobals)
-                    if (g.fieldRow == row)
+                    if (g.fieldRow == Key(row))
                     {
                         out = {Leaf(mt, ExprKind::Global, u32(g.global), m.globals[usize(g.global)].type), true};
                         return true;
@@ -944,7 +1002,7 @@ namespace helix::shadercompiler
                                                           !(g.element.IsNumeric() || g.element.base == BaseType::Struct)))
                         return Fail(mt.name, Format("buffer {} has an element type that shaders cannot use", field.name));
                     m.globals.Push(Move(g));
-                    fieldGlobals.Push({row, i32(m.globals.Size() - 1)});
+                    fieldGlobals.Push({Key(row), i32(m.globals.Size() - 1)});
                     out = {Leaf(mt, ExprKind::Global, u32(m.globals.Size() - 1), m.globals.Back().type), true};
                     return true;
                 }
@@ -1548,8 +1606,10 @@ namespace helix::shadercompiler
 
                 if (delegate)
                     return DelegateCall(mt, member, args, isNew);
+                // Delegates go to methods of the shader assembly and of included assemblies.
+                bool include = !user && !ns.Empty() && ns != kLibrary;
                 for (const Item& item : args)
-                    if (item.kind != ItemKind::Value && (!user || item.kind == ItemKind::Function))
+                    if (item.kind != ItemKind::Value && ((!user && !include) || item.kind == ItemKind::Function))
                         return Fail(mt.name, Format("a delegate is passed to {}; delegates may only be called or passed to methods of the shader", member));
                 if (buffer)
                     return BufferCall(mt, member, args);
@@ -1562,7 +1622,16 @@ namespace helix::shadercompiler
                 if (!user)
                 {
                     if (ns != kLibrary)
-                        return Fail(mt.name, Format("{}.{}.{} is not available in shaders", ns, typeName, member));
+                    {
+                        // A method of an included assembly.
+                        u32 assembly = current, row = 0;
+                        if (!token.Is(Table::MemberRef) || !ResolveMethodRef(token, assembly, row))
+                            return Fail(mt.name, Format("{}.{}.{} is not available in shaders{}", ns, typeName, member,
+                                                        ns == "System" || ns.StartsWith("System.") ? "" : " (is its assembly among TranslateOptions::references?)"));
+                        if (isNew)
+                            return Fail(mt.name, Format("constructor {} of a user type: use a static method or set the fields", typeName));
+                        return UserCall(mt, assembly, row, typeArgs, args);
+                    }
                     bool unknown = false;
                     if (LibraryCall(mt, typeName, member, sig, args, isNew, unknown))
                         return true;

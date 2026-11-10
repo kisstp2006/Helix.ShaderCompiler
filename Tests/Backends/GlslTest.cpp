@@ -212,6 +212,26 @@ HX_TEST(Glsl, EmitsComputeShadersWithStorageBuffers)
     std::printf("    %s\n", error.CStr());
     HX_CHECK(StringView(error).Contains("Translation") && StringView(error).Contains("TranslateOptions::references"));
 
+    // Resources declared by an included assembly are bound like the shader's own.
+    Assembly includes;
+    HX_REQUIRE(includes.Load(ShaderIncludesImage()));
+    const Assembly* references[] = {&includes};
+    TranslateOptions withIncludes;
+    withIncludes.references = Span<const Assembly* const>(references, 1);
+    u32 included = a.FindType("Helix.ShaderTests", "IncludedResources");
+    HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(included, "Fragment"), Stage::Fragment, module, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("SurfaceData") && StringView(error).Contains("TranslateOptions::references"));
+    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(included, "Fragment"), Stage::Fragment, module, error, withIncludes) &&
+               EmitGlsl(module, GlslTarget::Glsl330, desktop, error));
+    bool block = false, texture = false;
+    for (const GlslBinding& b : desktop.bindings)
+    {
+        block = block || (b.name == "hx_block_mainLight" && b.slot == 7);
+        texture = texture || (b.name == "g_ramp" && b.slot == 7);
+    }
+    HX_CHECK(block && texture);
+
     // Local functions and their closure struct get names that are valid GLSL identifiers.
     u32 locals = a.FindType("Helix.ShaderTests.Cases", "LocalFunctions");
     HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(locals, "Fragment"), Stage::Fragment, module, error) &&

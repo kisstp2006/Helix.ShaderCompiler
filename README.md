@@ -21,6 +21,7 @@ Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50, GLSL
 | `Source/Helix/ShaderCompiler/Transforms/` | `Simplify`: constant folding, constant locals, removal of code, functions and resources that cannot be reached |
 | `Source/Helix/ShaderCompiler/Backends/` | `EmitGlsl`: a module to GLSL source with its binding table; `EmitDxbc`: a module to a Direct3D bytecode container |
 | `Tests/Shaders/` | C# test shaders, built with the .NET SDK during the CMake build and embedded into the test program |
+| `Tests/Includes/` | C# assembly the test shaders call into, the way shaders use include files |
 | `Tests/Oracle/` | C# program that runs the test shaders on the CPU and writes the images the GPU must reproduce |
 | `Tests/Execution/` | Compiles every case, draws it through Helix.RHI and compares it with the CPU image |
 | `Tests/Shaders/Rhi/` | C# shaders of the Helix.RHI tests |
@@ -289,6 +290,10 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
   declared as static fields.
 - Methods of the shader library without an intrinsic (`float4x4.Translation`, `float4x4.Scale`, ...), compiled from
   their C# bodies when `TranslateOptions::references` holds the HelixEngine.Shaders assembly.
+- Code of other assemblies, the way shaders use include files: their structs, enums, functions (also taking delegates
+  of the caller) and the resources and keywords they declare. `TranslateOptions::references` holds the assemblies;
+  `AssemblyResolver` finds them by name among loaded ones and as `<name>.dll` in directories, and follows their
+  references.
 - `double` is computed as `float`.
 
 Not available, each reported with the method name and the reason: classes and anything allocated, recursion, exceptions,
@@ -341,6 +346,9 @@ cannot be indexed.
   targets are unchanged; half in a uniform block and in a vertex input is rejected.
 - Local functions: a static one, ones that capture a parameter and locals (changed after the capture), one that
   counts its calls in a captured local, and a nested one with a ref parameter.
+- Includes: structs, an enum, a readonly property and functions of Tests/Includes, a uniform struct of it, and a
+  capturing lambda passed into one of its functions; resources declared there are bound by slot; without the
+  assembly the error names TranslateOptions::references. The resolver finds the references in memory and on disk.
 - Library methods: a translation and a scale matrix from the library, multiplied and applied to a point; without the
   library assembly the error names TranslateOptions::references.
 - Properties: auto properties with get, set and init, a property with a body that clamps, computed and readonly

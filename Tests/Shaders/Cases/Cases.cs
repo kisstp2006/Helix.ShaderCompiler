@@ -1,4 +1,5 @@
 using System;
+using Helix.ShaderIncludes;
 using HelixEngine.Shaders;
 using static HelixEngine.Shaders.ShaderMath;
 
@@ -1004,5 +1005,27 @@ public static class LibraryMethods
         float4x4 m = Mul(float4x4.Translation(new float3(uv.x * 0.25f, 0.125f, 0.0f)), float4x4.Scale(new float3(0.5f, uv.y, 1.0f)));
         float4 p = Mul(m, new float4(uv, 0.5f, 1.0f));
         return new float4(p.xyz, 1.0f);
+    }
+}
+
+/// <summary>Code of another assembly: its structs and enums, its functions, a readonly property, and a lambda of this
+/// shader passed into it.</summary>
+public static class Includes
+{
+    [Uniform(0)] public static LightData light;
+
+    public static void Setup() =>
+        light = new LightData { direction = new float4(0.0f, 0.6f, 0.8f, 0.5f), color = new float4(1.0f, 0.75f, 0.5f, 1.0f) };
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        SurfaceData s = new SurfaceData { albedo = new float3(uv, 0.5f), roughness = uv.x * 0.5f };
+        float3 n = Normalize(new float3(uv.x - 0.5f, uv.y - 0.5f, 1.0f));
+        float3 c = Lighting.Shade(s, n, light, uv.y > 0.5f ? Falloff.Squared : Falloff.Linear);
+        float k = 0.5f + uv.y * 0.25f;
+        float r = Lighting.Remap(uv.x, v => v * k);
+        return new float4(c * 0.5f, r);
     }
 }

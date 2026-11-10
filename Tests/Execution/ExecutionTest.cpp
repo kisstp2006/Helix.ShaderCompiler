@@ -123,9 +123,9 @@ namespace
 {
 void RunCases(Device& d, bool direct3d)
 {
-    Assembly a, library;
-    HX_REQUIRE(a.Load(TestShadersImage()) && library.Load(ShaderLibraryImage()));
-    const Assembly* references[] = {&library};
+    Assembly a, library, includes;
+    HX_REQUIRE(a.Load(TestShadersImage()) && library.Load(ShaderLibraryImage()) && includes.Load(ShaderIncludesImage()));
+    const Assembly* references[] = {&library, &includes};
 
     Reader r{ShaderExpectations()};
     u32 size = r.U32(), caseCount = r.U32();
@@ -205,7 +205,7 @@ void RunCases(Device& d, bool direct3d)
             keywords[k].name = keywordNames[k];
         TranslateOptions options;
         options.keywords = Span<const KeywordValue>(keywords.Data(), keywords.Size());
-        options.references = Span<const Assembly* const>(references, 1);
+        options.references = Span<const Assembly* const>(references, 2);
 
         // Bindless resources, registered in the order of their CPU indices; on a fresh table the indices match.
         Array<TextureHandle> bindlessTextures;

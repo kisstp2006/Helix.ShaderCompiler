@@ -17,5 +17,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../External/Helix.Shaders/Source/HelixEngine.Shaders/HelixEngine.Shaders.csproj" />
+    <ProjectReference Include="../Includes/Helix.ShaderIncludes.csproj" />
   </ItemGroup>
 </Project>

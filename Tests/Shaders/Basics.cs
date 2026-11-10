@@ -1,3 +1,4 @@
+using Helix.ShaderIncludes;
 using HelixEngine.Shaders;
 
 namespace Helix.ShaderTests;
@@ -63,4 +64,16 @@ public static class Nested
     [FragmentShader]
     [return: Target(0)]
     public static float4 Fragment([Location(0)] float2 uv) => scene.ambient + scene.key.color * uv.x + scene.fill.color * scene.exposure;
+}
+
+/// <summary>A shader whose resources are declared by an included assembly.</summary>
+public static class IncludedResources
+{
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        SurfaceData s = new SurfaceData { albedo = new float3(uv, 1.0f), roughness = 0.5f };
+        return new float4(Lighting.ShadeMain(s, new float3(0.0f, 0.0f, 1.0f)), 1.0f);
+    }
 }
