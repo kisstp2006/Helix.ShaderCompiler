@@ -3,46 +3,114 @@
 Shader compiler of the Helix engine. Shaders are written in C# with Helix.Shaders and compiled by the C# compiler; this
 library reads the resulting assembly and turns the shader methods into GPU code. It contains no third party code.
 
-Current state: the assembly reader. The translation of IL to GPU code builds on it.
+Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50 and GLSL ES 3.00.
 
 ## Layout
 
 | Path | Content |
 |---|---|
-| `Source/Helix/ShaderCompiler/Assembly/Assembly.h` | `Assembly`: PE file, CLI metadata tables and heaps, types, fields, methods, parameters, method bodies, custom attributes |
-| `Source/Helix/ShaderCompiler/Assembly/Signature.h` | Method, field, local variable, type and generic instantiation signatures; decoding of custom attribute arguments |
-| `Source/Helix/ShaderCompiler/Assembly/IL.h` | IL opcodes and the instruction decoder |
-| `Tests/Assembly/` | Tests against real assemblies |
+| `Source/Helix/ShaderCompiler/Assembly/` | `Assembly` (PE file, CLI metadata, method bodies, custom attributes), signatures, IL instruction decoder |
+| `Source/Helix/ShaderCompiler/IR/` | The module a shader is translated to: types, structs, expressions, structured statements, functions, resources |
+| `Source/Helix/ShaderCompiler/Frontend/` | `TranslateEntryPoint`: IL of an entry point and everything it calls to a module |
+| `Source/Helix/ShaderCompiler/Backends/` | `EmitGlsl`: a module to GLSL source with its binding table |
 | `Tests/Shaders/` | C# test shaders, built with the .NET SDK during the CMake build and embedded into the test program |
+| `Tests/Oracle/` | C# program that runs the test shaders on the CPU and writes the images the GPU must reproduce |
+| `Tests/Execution/` | Compiles every case, draws it through Helix.RHI and compares it with the CPU image |
 | `Tools/EmbedFile.cmake` | Turns a binary file into a C++ byte array |
 
-## Assembly reader
+## Compiling a shader
 
 ```cpp
 using namespace helix::shadercompiler;
 Assembly assembly;
-if (!assembly.Load(bytes))
-    Report(assembly.Error());
+assembly.Load(bytes);
 u32 type = assembly.FindType("Game.Shaders", "Unlit");
-u32 method = assembly.FindMethod(type, "Fragment");
 
-MethodSig signature;
-ParseMethodSignature(assembly.Method(method).signature, signature);
-
-MethodBody body;
-assembly.Body(method, body);
-Instruction instruction;
-for (u32 at = 0; at < body.code.Size();)
-    if (!DecodeInstruction(body.code, at, instruction))
-        break;
+Module module;
+GlslShader shader;
+String error;
+if (!TranslateEntryPoint(assembly, assembly.FindMethod(type, "Fragment"), Stage::Fragment, module, error) ||
+    !EmitGlsl(module, GlslTarget::Glsl330, shader, error))
+    Report(error);
+// shader.source is the GLSL text, shader.bindings maps the names in it to the slots given in C#.
 ```
 
-- Implements the parts of ECMA-335 the compiler needs: PE32 and PE32+ containers, all 45 metadata tables with their
-  variable index sizes, the string, blob, user string and GUID heaps, tiny and fat method headers.
-- Rows are 1 based and tokens carry the table in the top byte, as in the file format.
-- Every read is bounds checked. A damaged file fails to load or yields empty values; the tests walk 400 randomly damaged
-  copies of an assembly.
-- The image passed to `Load` must stay alive while the `Assembly` is used; names and blobs point into it.
+The C# method
+
+```csharp
+[FragmentShader]
+[return: Target(0)]
+public static float4 Fragment(Varyings input)
+{
+    float4 texel = albedo.Sample(albedoSampler, input.uv);
+    float3 color = texel.xyz * draw.tint.xyz;
+    if (texel.w < 0.5f)
+        Discard();
+    return new float4(color, texel.w);
+}
+```
+
+becomes
+
+```glsl
+vec4 f_Fragment_0(in S_Varyings_0 p_input)
+{
+    vec4 l0;
+    vec3 l1;
+    l0 = texture(g_albedo, p_input.m_uv);
+    l1 = (l0.xyz * g_draw.m_tint.xyz);
+    if ((l0.w < 0.5))
+    {
+        discard;
+    }
+    return vec4(l1, l0.w);
+}
+```
+
+## How it works
+
+1. The assembly reader finds the method, its signature and its IL.
+2. The frontend runs the IL on a symbolic stack: every instruction builds an expression, stores become statements. Calls into
+   the shader library turn into operations (`ShaderMath.Dot` is `dot`, `float3.xyz` is a swizzle, `float4 * float4` is a
+   multiplication); other static methods are translated the same way and become functions, generic ones once per type.
+3. The branches of the IL form a control flow graph. Short circuit conditions are merged back into `&&` and `||`, loops are
+   found from back edges, and the graph is written as `if`, `while`, `break`, `continue` and `return`.
+4. The backend prints the module as GLSL and checks that every uniform struct has the same layout in C# and in std140.
+
+## What shader code may use
+
+- `float`, `int`, `uint`, `bool`, the vector and matrix types of Helix.Shaders, structs of those (also nested).
+- Static methods, generic methods, `ref`, `out` and `in` parameters, methods of user structs.
+- `if`, `for`, `while`, `do`, `switch`, `break`, `continue`, early `return`, `?:`, `&&`, `||`.
+- The functions of `ShaderMath`, `Texture2D.Sample`, `SampleLevel`, `Load`, `Size`, and uniform structs, textures and samplers
+  declared as static fields.
+- `double` is computed as `float`.
+
+Not available, each reported with the method name and the reason: classes and anything allocated, recursion, exceptions,
+`goto`, 64 bit integers, storage buffers and compute shaders (not implemented yet), calls into other libraries.
+Keywords are always off for now; variants are not selected yet.
+
+## Conventions of the generated GLSL
+
+| C# | GLSL |
+|---|---|
+| vertex input `[Location(n)]` | `layout(location = n) in ... hx_in<n>` |
+| value from vertex to fragment `[Location(n)]` | `hx_v<n>`, `flat` for integers |
+| fragment output `[Target(n)]` | `layout(location = n) out ... hx_target<n>` |
+| `[Position]` | `gl_Position` in the vertex stage, `gl_FragCoord` in the fragment stage |
+| `[Uniform(slot)] static T name` | `layout(std140) uniform hx_block_name { T g_name; }` |
+| `[Texture(slot)] static Texture2D name` | `uniform sampler2D g_name`; the sampler state travels with the slot |
+
+## Tests
+
+- Assembly reader: tables, signatures, instructions and attributes of real assemblies, and 400 randomly damaged files.
+- Execution: 14 C# shaders (arithmetic, branches, loops, switch, functions with `ref`/`out` and generics, library functions,
+  integers, matrices, uniforms, textures, discard, bool vectors, nested structs) run on the CPU as C# and on the GPU as
+  generated GLSL 3.30 and 4.50; the images must agree within 2/255. They run on every OpenGL device the machine offers.
+- GLSL ES 3.00 output is checked as text only; it is not executed yet.
+- Rejected shaders: recursion, a uniform struct whose layout differs between C# and std140, a missing stage attribute.
+
+`HELIX_PRINT_SHADERS=<case name>` prints the generated fragment shader of one execution case.
 
 ## Build
 

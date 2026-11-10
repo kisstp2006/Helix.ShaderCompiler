@@ -1,6 +1,7 @@
 #pragma once
 
-// Byte arrays of the assemblies built from Tests/Shaders and from Helix.Shaders, generated at build time.
+// Byte arrays generated at build time: the assemblies built from Tests/Shaders and Helix.Shaders, and the oracle output.
+#include <ShaderExpectations.h>
 #include <ShaderLibraryAssembly.h>
 #include <TestShadersAssembly.h>
 
@@ -9,5 +10,7 @@
 namespace helix::shadercompiler::testing
 {
     inline Span<const u8> TestShadersImage() { return Span<const u8>(kTestShadersAssembly, sizeof(kTestShadersAssembly)); }
+    // Output of Tests/Oracle: what each case of Tests/Shaders/Cases produces on the CPU.
+    inline Span<const u8> ShaderExpectations() { return Span<const u8>(kShaderExpectations, sizeof(kShaderExpectations)); }
     inline Span<const u8> ShaderLibraryImage() { return Span<const u8>(kShaderLibraryAssembly, sizeof(kShaderLibraryAssembly)); }
 }

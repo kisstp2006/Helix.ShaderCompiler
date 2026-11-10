@@ -10,3 +10,18 @@
 [submodule "External/Helix.Shaders"]
 	path = External/Helix.Shaders
 	url = https://github.com/kisstp2006/Helix.Shaders
+[submodule "External/Helix.Platform"]
+	path = External/Helix.Platform
+	url = https://github.com/kisstp2006/Helix.Platform
+[submodule "External/Helix.Profiler"]
+	path = External/Helix.Profiler
+	url = https://github.com/kisstp2006/Helix.Profiler
+[submodule "External/Helix.GL"]
+	path = External/Helix.GL
+	url = https://github.com/kisstp2006/Helix.GL
+[submodule "External/Helix.D3D11"]
+	path = External/Helix.D3D11
+	url = https://github.com/kisstp2006/Helix.D3D11
+[submodule "External/Helix.RHI"]
+	path = External/Helix.RHI
+	url = https://github.com/kisstp2006/Helix.RHI
