@@ -13,6 +13,7 @@ Current state: vertex and fragment shaders compile to GLSL 3.30, GLSL 4.50, GLSL
 | `Source/Helix/ShaderCompiler/Assembly/` | `Assembly` (PE file, CLI metadata, method bodies, custom attributes), signatures, IL instruction decoder |
 | `Source/Helix/ShaderCompiler/IR/` | The module a shader is translated to: types, structs, expressions, structured statements, functions, resources |
 | `Source/Helix/ShaderCompiler/Frontend/` | `TranslateEntryPoint`: IL of an entry point and everything it calls to a module |
+| `Source/Helix/ShaderCompiler/Definition/` | `ReadShaderDefinitions`: shaders, material properties, keywords, passes and render state declared in an assembly |
 | `Source/Helix/ShaderCompiler/Transforms/` | `Simplify`: constant folding, constant locals, removal of code, functions and resources that cannot be reached |
 | `Source/Helix/ShaderCompiler/Backends/` | `EmitGlsl`: a module to GLSL source with its binding table; `EmitDxbc`: a module to a Direct3D bytecode container |
 | `Tests/Shaders/` | C# test shaders, built with the .NET SDK during the CMake build and embedded into the test program |
@@ -42,6 +43,27 @@ DxbcShader code;
 EmitDxbc(module, code, error);
 // code.bytes goes to ID3D11Device::CreatePixelShader as it is.
 ```
+
+## Shader definitions
+
+A class derived from `ShaderDefinition` declares a shader. `ReadShaderDefinitions` reads all of them from an assembly
+without translating code:
+
+```cpp
+Array<ShaderDescription> shaders;
+if (!ReadShaderDefinitions(assembly, shaders, error))
+    Report(error);
+const ShaderPass* pass = shaders[0].FindPass("Forward");
+// pass->state: culling, depth, blending per target, stencil, color mask, depth offset.
+TranslateEntryPoint(assembly, pass->fragment, Stage::Fragment, module, error, options);
+```
+
+A `ShaderDescription` holds the name, fallback, tags and LOD of the shader, its material properties (type, display name,
+range, default value or default texture, flags such as main texture or HDR, the keyword a toggle drives), its keywords
+(scope, shader feature, dynamic, the members of an enum keyword with their values) and its passes in source order with
+their render state and entry point methods. Declarations that cannot work are errors naming the shader and the member: a
+property type materials cannot hold, a pass without both entry points, a toggle naming a keyword the shader does not have,
+a name used twice.
 
 ## Keywords and variants
 
@@ -155,6 +177,8 @@ Not written yet for Direct3D: front facing input, depth output, writing a vector
 - GLSL ES 3.00 output is checked as text only; it is not executed yet.
 - Keywords: a case with a bool and an enum keyword runs in all six combinations on the CPU and the GPU; the text tests
   check that the code, the helper function and the texture of other variants are gone.
+- Definitions: a shader using every declarative feature is read back field by field, a pass of it is compiled with
+  keyword values taken from the description, and three broken definitions give their messages.
 - Rejected shaders: recursion, a uniform struct whose layout differs between C# and std140, a missing stage attribute.
 
 `HELIX_PRINT_SHADERS=<case name>` prints the generated fragment shader of one execution case and writes its bytecode to
