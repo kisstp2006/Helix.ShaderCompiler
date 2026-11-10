@@ -25,3 +25,6 @@
 [submodule "External/Helix.RHI"]
 	path = External/Helix.RHI
 	url = https://github.com/kisstp2006/Helix.RHI
+[submodule "External/Helix.Jobs"]
+	path = External/Helix.Jobs
+	url = https://github.com/kisstp2006/Helix.Jobs

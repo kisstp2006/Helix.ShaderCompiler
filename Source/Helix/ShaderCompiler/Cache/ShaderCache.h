@@ -2,7 +2,11 @@
 
 #include <Helix/Core/Containers/HashMap.h>
 #include <Helix/ShaderCompiler/Backends/Glsl.h>
+#include <Helix/ShaderCompiler/Frontend/Frontend.h>
 #include <Helix/ShaderCompiler/IR/IR.h>
+
+#include <atomic>
+#include <mutex>
 
 namespace helix::shadercompiler
 {
@@ -46,8 +50,18 @@ namespace helix::shadercompiler
 
     ShaderKey MakeShaderKey(const Module& module, ShaderTarget target);
 
-    // Keeps compiled shaders by key, in memory and optionally as one file per shader in a directory. Not thread safe:
-    // use one cache per thread or lock around it.
+    // The first level key: everything the translation of the entry point reads, so the frontend can be skipped. That is
+    // the closure reachable from the method (methods with their bodies, signatures, parameters and attributes; the
+    // types, fields, enums and resources they use) in the shader assembly and the referenced ones, with the stage, the
+    // keyword values, the optimization switch, the target and the compiler version. Code outside the closure does not
+    // count, so changing it keeps every shader that does not reach it.
+    ShaderKey MakeSourceKey(const Assembly& assembly, u32 method, Stage stage, const TranslateOptions& options, ShaderTarget target);
+
+    // A key for two keys in this order (a vertex stage linked to its fragment stage).
+    ShaderKey CombineKeys(const ShaderKey& first, const ShaderKey& second);
+
+    // Keeps compiled shaders by key, in memory and optionally as one file per shader in a directory. Thread safe: one
+    // cache serves every thread that compiles.
     class ShaderCache
     {
     public:
@@ -58,20 +72,26 @@ namespace helix::shadercompiler
         void Store(const ShaderKey& key, const CompiledShader& shader);
 
         // How often Find gave a result from memory, from a file, or nothing.
-        u32 MemoryHits() const { return memoryHits_; }
-        u32 FileHits() const { return fileHits_; }
-        u32 Misses() const { return misses_; }
+        u32 MemoryHits() const { return memoryHits_.load(); }
+        u32 FileHits() const { return fileHits_.load(); }
+        u32 Misses() const { return misses_.load(); }
 
     private:
         String Path(const ShaderKey& key) const;
 
         String directory_;
         HashMap<ShaderKey, CompiledShader> entries_;
-        u32 memoryHits_ = 0, fileHits_ = 0, misses_ = 0;
+        std::mutex mutex_;
+        std::atomic<u32> memoryHits_{0}, fileHits_{0}, misses_{0};
     };
 
     // Runs the backend of the target on the module. With a cache, a module compiled before is not compiled again.
     bool CompileModule(const Module& module, ShaderTarget target, CompiledShader& out, String& error, ShaderCache* cache = nullptr);
+
+    // Translates and compiles an entry point through both levels of the cache: a hit on the source key skips the
+    // frontend, a hit on the module key skips the backend.
+    bool CompileEntryPoint(const Assembly& assembly, u32 method, Stage stage, const TranslateOptions& options, ShaderTarget target, CompiledShader& out,
+                           String& error, ShaderCache* cache = nullptr);
 }
 
 namespace helix

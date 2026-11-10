@@ -1,6 +1,7 @@
 #include <Support/TestAssemblies.h>
 
 #include <Helix/Core/Strings/Format.h>
+#include <Helix/Jobs/Jobs.h>
 #include <Helix/Platform/IO/FileSystem.h>
 #include <Helix/ShaderCompiler/Cache/ShaderCache.h>
 #include <Helix/ShaderCompiler/Variants/Variants.h>
@@ -182,6 +183,94 @@ HX_TEST(Cache, CompilesKernelVariants)
                     HX_CHECK(compiled.Text().StartsWith("#version 310 es"));
             }
     HX_CHECK(cache.Misses() == 6u && cache.MemoryHits() == 6u);
+}
+
+HX_TEST(Cache, SourceKeyCoversWhatTheTranslationReads)
+{
+    Span<const u8> image = TestShadersImage();
+    Assembly a;
+    HX_REQUIRE(a.Load(image));
+    auto method = [&](const Assembly& from, StringView type) { return from.FindMethod(from.FindType("Helix.ShaderTests.Cases", type), "Fragment"); };
+    TranslateOptions options;
+    ShaderKey gradient = MakeSourceKey(a, method(a, "Gradient"), Stage::Fragment, options, ShaderTarget::Glsl330);
+    ShaderKey arithmetic = MakeSourceKey(a, method(a, "Arithmetic"), Stage::Fragment, options, ShaderTarget::Glsl330);
+    HX_CHECK(gradient == MakeSourceKey(a, method(a, "Gradient"), Stage::Fragment, options, ShaderTarget::Glsl330) && !(gradient == arithmetic));
+    HX_CHECK(!(gradient == MakeSourceKey(a, method(a, "Gradient"), Stage::Fragment, options, ShaderTarget::Dxbc)));
+    // Keyword values count, in any order.
+    const KeywordValue on[] = {{"Stripes", 1}, {"Quality", 2}}, swapped[] = {{"Quality", 2}, {"Stripes", 1}}, off[] = {{"Stripes", 0}, {"Quality", 2}};
+    TranslateOptions first, second, third;
+    first.keywords = on;
+    second.keywords = swapped;
+    third.keywords = off;
+    u32 keywords = method(a, "Keywords");
+    HX_CHECK(MakeSourceKey(a, keywords, Stage::Fragment, first, ShaderTarget::Glsl330) == MakeSourceKey(a, keywords, Stage::Fragment, second, ShaderTarget::Glsl330));
+    HX_CHECK(!(MakeSourceKey(a, keywords, Stage::Fragment, first, ShaderTarget::Glsl330) == MakeSourceKey(a, keywords, Stage::Fragment, third, ShaderTarget::Glsl330)));
+
+    // A constant changed in the body of Arithmetic: its key changes, the key of Gradient, which does not reach it, stays.
+    MethodBody body;
+    HX_REQUIRE(a.Body(method(a, "Arithmetic"), body));
+    Array<u8> edited;
+    edited.Append(image.Data(), image.Size());
+    usize at = usize(body.code.Data() - image.Data());
+    bool changed = false;
+    for (usize i = 0; i + 4 < body.code.Size() && !changed; i++)
+        if (body.code[i] == 0x22) // ldc.r4
+        {
+            edited[at + i + 4] ^= 0x01;
+            changed = true;
+        }
+    HX_REQUIRE(changed);
+    Assembly b;
+    HX_REQUIRE(b.Load(Span<const u8>(edited.Data(), edited.Size())));
+    HX_CHECK(gradient == MakeSourceKey(b, method(b, "Gradient"), Stage::Fragment, options, ShaderTarget::Glsl330));
+    HX_CHECK(!(arithmetic == MakeSourceKey(b, method(b, "Arithmetic"), Stage::Fragment, options, ShaderTarget::Glsl330)));
+
+    // The second compile of an entry point is found by its source key: the frontend does not run again.
+    ShaderCache cache;
+    CompiledShader once, twice;
+    String error;
+    HX_REQUIRE(CompileEntryPoint(a, method(a, "Arithmetic"), Stage::Fragment, options, ShaderTarget::Glsl330, once, error, &cache));
+    HX_CHECK(cache.Misses() == 2u && cache.MemoryHits() == 0u);
+    HX_REQUIRE(CompileEntryPoint(a, method(a, "Arithmetic"), Stage::Fragment, options, ShaderTarget::Glsl330, twice, error, &cache));
+    HX_CHECK(cache.Misses() == 2u && cache.MemoryHits() == 1u && Same(once, twice));
+}
+
+HX_TEST(Cache, CompilesTheVariantsOfAPassInParallel)
+{
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    ShaderDescription glass;
+    String error;
+    HX_REQUIRE(ReadShaderDefinition(a, a.FindType("Helix.ShaderTests", "Glass"), glass, error));
+    const ShaderPass* forward = glass.FindPass("Forward");
+    const i64 details[] = {1, 5};
+    const KeywordSelection used[] = {{"Detail", details}};
+    VariantSet set;
+    HX_REQUIRE(EnumerateVariants(a, glass, *forward, used, set, error) && set.variants.Size() == 6u);
+    TranslateOptions options;
+
+    // One after the other, then in parallel into another cache: the same shaders.
+    ShaderCache serialCache, parallelCache;
+    Array<PassVariant> serial, parallel;
+    HX_REQUIRE(!jobs::IsInitialized());
+    bool ok = CompileVariants(a, *forward, set, ShaderTarget::Glsl330, options, serialCache, serial, error);
+    if (!ok)
+        std::printf("    %s\n", error.CStr());
+    HX_REQUIRE(ok);
+    HX_REQUIRE(jobs::Initialize({.workerCount = 4}));
+    ok = CompileVariants(a, *forward, set, ShaderTarget::Glsl330, options, parallelCache, parallel, error);
+    jobs::Shutdown();
+    HX_REQUIRE(ok && serial.Size() == 6u && parallel.Size() == 6u);
+    for (usize v = 0; v < 6; v++)
+        HX_CHECK(Same(serial[v].vertex, parallel[v].vertex) && Same(serial[v].fragment, parallel[v].fragment) && !serial[v].fragment.code.Empty());
+    // Low and Medium give the same fragment code: the module key shares it, whichever thread got there first.
+    HX_CHECK(Same(serial[0].fragment, serial[2].fragment) || Same(serial[0].fragment, serial[1].fragment));
+    // Two threads may both miss a module the other is compiling, so the parallel cache can count a few more misses.
+    HX_CHECK(parallelCache.Misses() >= serialCache.Misses());
+    // Asked again, every variant comes from its source keys.
+    u32 hits = parallelCache.MemoryHits();
+    HX_REQUIRE(CompileVariants(a, *forward, set, ShaderTarget::Glsl330, options, parallelCache, parallel, error));
+    HX_CHECK(parallelCache.MemoryHits() == hits + 12u);
 }
 
 HX_TEST(Cache, KeepsShadersInADirectory)

@@ -6,22 +6,24 @@ if(NOT COMMAND helix_add_library)
 endif()
 
 helix_require(Core)
+# Helix.Jobs (on Platform and Profiler) compiles the variants of a pass in parallel.
+helix_require(Platform)
+helix_require(Profiler)
+helix_require(Jobs)
 if(PROJECT_IS_TOP_LEVEL)
     # Only the tests use these: compiled shaders run on the GPU through Helix.RHI.
-    helix_require(Platform)
-    helix_require(Profiler)
     helix_require(GL)
     helix_require(D3D11)
     helix_require(RHI)
 endif()
-helix_add_library(helix_shader_compiler ALIAS ShaderCompiler PUBLIC_DEPS Helix::Core)
+helix_add_library(helix_shader_compiler ALIAS ShaderCompiler PUBLIC_DEPS Helix::Core PRIVATE_DEPS Helix::Jobs)
 
-helix_add_test_suite(helix_shader_compiler_tests DEPS Helix::ShaderCompiler Helix::RHI EXCLUDE "/Support/DiscreteGpu.cpp$")
+helix_add_test_suite(helix_shader_compiler_tests DEPS Helix::ShaderCompiler Helix::RHI Helix::Jobs EXCLUDE "/Support/DiscreteGpu.cpp$")
 if(TARGET helix_shader_compiler_tests AND HELIX_PLATFORM STREQUAL "windows")
     # The same tests on the discrete GPU of hybrid graphics machines.
     get_target_property(shader_test_sources helix_shader_compiler_tests SOURCES)
     helix_add_executable(helix_shader_compiler_tests_discrete_gpu SOURCES ${shader_test_sources} Tests/Support/DiscreteGpu.cpp
-                         DEPS Helix::ShaderCompiler Helix::RHI Helix::TestMain)
+                         DEPS Helix::ShaderCompiler Helix::RHI Helix::Jobs Helix::TestMain)
     target_include_directories(helix_shader_compiler_tests_discrete_gpu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source ${CMAKE_CURRENT_SOURCE_DIR}/Tests)
     add_test(NAME helix_shader_compiler_tests_discrete_gpu COMMAND helix_shader_compiler_tests_discrete_gpu)
 endif()

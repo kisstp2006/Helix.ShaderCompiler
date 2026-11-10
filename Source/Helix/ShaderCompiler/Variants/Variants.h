@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Helix/ShaderCompiler/Cache/ShaderCache.h>
 #include <Helix/ShaderCompiler/Definition/ShaderDefinition.h>
 #include <Helix/ShaderCompiler/Frontend/Frontend.h>
 
@@ -35,6 +36,20 @@ namespace helix::shadercompiler
     // not declare, or when there would be more than `limit` variants.
     bool EnumerateVariants(const Assembly& assembly, const ShaderDescription& shader, const ShaderPass& pass, Span<const KeywordSelection> used,
                            VariantSet& out, String& error, u32 limit = 4096);
+
+    // One variant of a pass, compiled.
+    struct PassVariant
+    {
+        CompiledShader vertex, fragment;
+        String error;
+    };
+
+    // Compiles every variant of the set for the target: each vertex stage linked to its fragment stage, through the
+    // cache (both levels). With the job system running the variants compile in parallel, else one after the other, with
+    // the same results. `options` gives the references, symbols and pass switches; the keywords come from the set. Fails
+    // when a variant does; its PassVariant::error says why.
+    bool CompileVariants(const Assembly& assembly, const ShaderPass& pass, const VariantSet& set, ShaderTarget target, const TranslateOptions& options,
+                         ShaderCache& cache, Array<PassVariant>& out, String& error);
 
     // The variants of one kernel of a compute shader, by the same rules: the keywords its code reads, with the values of
     // the compute definition's declarations.

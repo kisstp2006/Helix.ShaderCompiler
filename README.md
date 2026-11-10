@@ -16,7 +16,7 @@ model 5.0 bytecode.
 | `Source/Helix/ShaderCompiler/Frontend/` | `TranslateEntryPoint`: IL of an entry point and everything it calls to a module |
 | `Source/Helix/ShaderCompiler/Definition/` | `ReadShaderDefinitions`: shaders, material properties, keywords, passes and render state declared in an assembly |
 | `Source/Helix/ShaderCompiler/Variants/` | `EnumerateVariants`: the keyword combinations a pass has to be compiled for |
-| `Source/Helix/ShaderCompiler/Cache/` | `CompileModule` and `ShaderCache`: one entry point for all targets, results kept by content in memory and on disk |
+| `Source/Helix/ShaderCompiler/Cache/` | `CompileModule`, `CompileEntryPoint` and `ShaderCache`: one entry point for all targets, results kept by source key and by module content, in memory and on disk, thread safe |
 | `Source/Helix/ShaderCompiler/Material/` | `BindProperties`: where each material property of a shader goes in one compiled pass, and the default block data |
 | `Source/Helix/ShaderCompiler/Reflection/` | `Reflect` and `LinkReflection`: uniform block layouts, resource slots, stage inputs and outputs of a compiled variant, and whether two stages fit |
 | `Source/Helix/ShaderCompiler/Transforms/` | The passes on a translated module (`ShaderPasses`, one table), `RunPasses`, `LinkStages` (vertex outputs the fragment stage of the variant does not read are not written), `VerifyModule` and `PrintModule`; `Simplify`: constant folding, constant locals, removal of code, functions and resources that cannot be reached; counted loops unrolled (`[Unroll]` and `[Loop]` on a method, else short and small loops); struct locals split into one local per field; copy propagation; common subexpressions in straight runs of statements; dead stores, locals and helper parameters |
@@ -130,7 +130,14 @@ materials use (`used`), so unused variants are never built. More variants than t
 `kShaderCompilerVersion`. Because the module holds only the code a variant reaches, variants that end up with the same
 code share one entry, and after the assembly is rebuilt only shaders whose reachable code changed are compiled again.
 With a directory the cache keeps one file per shader (`<key>.hxsc`), written under a temporary name first; files that
-are damaged or from another compiler version count as missing. A cache object is not thread safe.
+are damaged or from another compiler version count as missing.
+
+`CompileEntryPoint` adds a first level: `MakeSourceKey` hashes what the translation reads (every method reachable from
+the entry with its body, signature, parameters and attributes, the types, fields, enums and resources they use, in the
+shader assembly and the referenced ones), with the stage, the keyword values, the target and the compiler version. A hit
+skips the frontend; editing code no shader reaches changes no key. `CompileVariants` compiles every variant of a pass
+(each vertex stage linked to its fragment stage) through both levels, in parallel on Helix.Jobs when the job system
+runs. The cache is thread safe: one object serves every thread.
 
 ## Reflection
 
@@ -395,6 +402,9 @@ cannot be indexed.
 - HLSL text: registers, samplers with their textures, cbuffers, mul with swapped operands for the transposed matrices,
   numthreads and atomics, and an HLSL form for every case and kernel; printed when Direct3D rejects a shader and with
   HELIX_PRINT_SHADERS.
+- Cache levels: source keys are stable, depend on keyword values but not their order and on the target, change with an
+  edited method body only for the shaders that reach it; a second compile skips the frontend; the variants of a pass
+  compiled in parallel equal those compiled one after the other (run 60 times).
 - Kernel variants: a kernel with a bool and an enum keyword runs once per combination, compiled through the cache; the
   variants of the kernels of a compute definition for the three compute targets.
 - Dynamic keywords: a bool and an enum read from the keyword block next to a plain keyword, every combination; the
