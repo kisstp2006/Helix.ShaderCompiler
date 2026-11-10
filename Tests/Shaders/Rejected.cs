@@ -1,3 +1,4 @@
+using System;
 using HelixEngine.Shaders;
 
 namespace Helix.ShaderTests;
@@ -87,6 +88,28 @@ public static class Rejected
         FixedWeights w = default;
         w.values[0] = uv.x;
         return new float4(w.values[0]);
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 PicksLambda([Location(0)] float2 uv)
+    {
+        Func<float, float> f = uv.x > 0.5f ? v => v * 2.0f : v => v * 0.5f;
+        return new float4(f(uv.y));
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 NestedCapture([Location(0)] float2 uv)
+    {
+        float sum = 0.0f;
+        for (int i = 0; i < 2; i++)
+        {
+            float k = i;
+            Func<float, float> f = v => v * k + sum;
+            sum = f(uv.x);
+        }
+        return new float4(sum);
     }
 
     [VertexShader]

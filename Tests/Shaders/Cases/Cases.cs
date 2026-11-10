@@ -1,3 +1,4 @@
+using System;
 using HelixEngine.Shaders;
 using static HelixEngine.Shaders.ShaderMath;
 
@@ -899,5 +900,39 @@ public static class LocalFunctions
         gain = 0.75f;
         float b = Scaled(0.5f);
         return new float4(r, g * 0.5f, b, steps * 0.25f);
+    }
+}
+
+/// <summary>Lambdas and delegates: cached ones without captures, ones that read and write captured variables, method
+/// groups, a delegate type of the assembly, and delegates passed on through two helpers.</summary>
+public static class Lambdas
+{
+    private delegate float Blend(float a, float b);
+
+    private static float Apply(Func<float, float> f, float v) => f(v);
+
+    private static float Twice(Func<float, float> f, float v) => Apply(f, Apply(f, v));
+
+    private static float Square(float v) => v * v;
+
+    private static float Mix(Blend blend, float a, float b) => blend(a, b);
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        Func<float, float> halve = v => v * 0.5f;
+        float offset = uv.y * 0.25f;
+        Func<float, float> shift = v => v + offset;
+        int calls = 0;
+        Action count = () => calls++;
+        float r = Apply(halve, uv.x);
+        float g = Twice(shift, uv.x * 0.5f);
+        count();
+        count();
+        offset = 0.125f;
+        float b = shift(Apply(Square, uv.y)) * 0.5f;
+        float a = Mix((x, y) => x * 0.25f + y * 0.5f, uv.x, uv.y) + calls * 0.0625f;
+        return new float4(r, g, b, a);
     }
 }

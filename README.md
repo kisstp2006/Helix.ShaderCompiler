@@ -274,6 +274,10 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
   buffers (`fixed float x[4]`) need unsafe code and are rejected with a message that names `[InlineArray]`.
 - Static methods, generic methods, `ref`, `out` and `in` parameters, ref locals, methods of user structs, local
   functions (also ones that read and write variables of the enclosing method).
+- Lambdas, method groups and delegates (`Func<>`, `Action<>` and delegate types of the assembly) in locals and as
+  arguments of methods of the shader, also capturing variables. A delegate must be known when the shader compiles:
+  one chosen by a condition, stored in a field or returned is rejected, and so is a lambda that captures variables of
+  two scopes (a loop body and the method). A method that receives a delegate is compiled once per delegate.
 - Vector components and matrix columns by index (`v[i]`, `m[i]`), also written at computed positions.
 - `if`, `for`, `while`, `do`, `switch`, `break`, `continue`, early `return`, `?:`, `&&`, `||`.
 - The functions of `ShaderMath`, `Texture2D<T>`, `Texture2DArray<T>`, `Texture3D<T>` and `TextureCube<T>` with float, int or uint
@@ -332,6 +336,9 @@ cannot be indexed.
   targets are unchanged; half in a uniform block and in a vertex input is rejected.
 - Local functions: a static one, ones that capture a parameter and locals (changed after the capture), one that
   counts its calls in a captured local, and a nested one with a ref parameter.
+- Lambdas: a cached one without captures, one that reads a captured local changed later, one that counts its calls
+  in a captured local, a method group, a delegate type of the assembly, and a delegate passed on through two helpers;
+  a delegate chosen by a condition and a lambda capturing two scopes are rejected.
 - Inline arrays: a uniform block with an array of float4 and an array of structs, a local struct holding an array of
   floats, an array passed to a helper, and reads and writes at computed indices; scalar elements in a uniform block and a
   fixed buffer are rejected.

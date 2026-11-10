@@ -14,10 +14,22 @@ namespace helix::shadercompiler
 
         // A value on the IL evaluation stack. Addresses (ldloca, ldflda, ref parameters) keep the expression of the
         // place they point to; reading through one yields the same expression.
+        // Delegates exist only while compiling: a null object, a method pointer (ldftn) and a delegate made of the two
+        // stand on the stack as entries of Method::delegates, never as IR values.
+        enum class ItemKind : u8
+        {
+            Value,
+            Null,
+            Function,
+            Delegate,
+        };
+
         struct Item
         {
             ExprId e = 0;
             bool address = false;
+            ItemKind kind = ItemKind::Value;
+            i32 index = -1;
         };
 
         // Vector and matrix types of the shader library by name: float3, int2, bool4, float4x4, ...
@@ -96,6 +108,24 @@ namespace helix::shadercompiler
             Array<Compiled> compiled;
             Array<String> building;
 
+            // The method a delegate calls and the closure it carries (0 for none: a lambda without captures or a static
+            // method).
+            struct DelegateInfo
+            {
+                u32 target = 0;
+                Array<Type> typeArgs;
+                ExprId closure = 0;
+            };
+            // A delegate argument of a call: the callee is compiled for the method it calls, and the closure becomes an
+            // inout parameter.
+            struct Binding
+            {
+                u32 arg = 0;
+                u32 target = 0;
+                Array<Type> typeArgs;
+                i32 closure = -1;
+            };
+
             // ---- per method state ----
             struct Method
             {
@@ -106,8 +136,15 @@ namespace helix::shadercompiler
                 Array<u8> temporary; // per local: created by the translation, written once before use
                 // Per IL local: 1 for a ref local (the C# compiler makes them for compound assignments), 2 for a Span over an
                 // inline array, and the place it refers to.
+                // 3 marks a delegate local, which stands for the delegate it was set to.
                 Array<u8> isRef;
                 Array<ExprId> refTarget;
+                Array<i32> localDelegate;
+                // Per IL argument: the parameter of the function (-1 when it has none: the unused this of a lambda without
+                // captures, a delegate without closure) and the delegate a delegate argument stands for.
+                Array<i32> argParam;
+                Array<i32> argDelegate;
+                Array<DelegateInfo> delegates;
                 Array<Instruction> code;
                 Array<i32> blockOfOffset;
                 Array<FlowBlock> blocks;
@@ -235,6 +272,14 @@ namespace helix::shadercompiler
                     TypeSig sig;
                     StructField& out = s.fields.Emplace();
                     bool byRef = false;
+                    // Nested closures refer to each other; shaders keep a closure as a value, which would copy the outer one.
+                    if (IsClosureType(typeRow) && ParseFieldSignature(field.signature, sig) &&
+                        (sig.kind == ElementType::Class || sig.kind == ElementType::Object))
+                    {
+                        Fail(method, "a lambda captures variables of two scopes (for example of a loop body and of the method) or this; "
+                                     "declare the variables it captures in one scope");
+                        return -1;
+                    }
                     // A fixed buffer looks like a struct of one element; it is refused before its type is mapped.
                     Array<CustomAttribute> attributes;
                     a.Attributes(Token(Table::Field, f), attributes);
@@ -311,6 +356,17 @@ namespace helix::shadercompiler
                     out = Type::Struct(u32(index));
                     return true;
                 }
+                case ElementType::Class:
+                {
+                    // The class the C# compiler keeps variables captured by lambdas in is a struct in shaders.
+                    if (!sig.token.Is(Table::TypeDef) || !IsClosureType(sig.token.Row()))
+                        return false;
+                    i32 index = StructFor(sig.token.Row(), where);
+                    if (index < 0)
+                        return false;
+                    out = Type::Struct(u32(index));
+                    return true;
+                }
                 case ElementType::GenericInst:
                     if (IsImageType(sig))
                     {
@@ -328,6 +384,107 @@ namespace helix::shadercompiler
                     return true;
                 default: return false;
                 }
+            }
+
+            // ---------------------------------------------------------------- delegates
+
+            // Variables captured by lambdas and local functions live in these.
+            bool IsClosureType(u32 typeRow) const { return a.TypeDef(typeRow).name.StartsWith("<>c__DisplayClass"); }
+
+            // The class of lambdas without captures and the one of cached method groups.
+            bool IsLambdaHolder(u32 typeRow) const
+            {
+                StringView name = a.TypeDef(typeRow).name;
+                return name == "<>c" || name == "<>O";
+            }
+
+            // Func<>, Action<>, Action and delegate types declared in the shader assembly.
+            bool IsDelegateTypeToken(Token t) const
+            {
+                if (t.Is(Table::TypeSpec))
+                {
+                    TypeSig spec;
+                    return ParseTypeSpec(a.TypeSpecSignature(t.Row()), spec) && spec.kind == ElementType::GenericInst && IsDelegateTypeToken(spec.token);
+                }
+                StringView ns, name;
+                if (!a.TypeName(t, ns, name))
+                    return false;
+                if (ns == "System" && (name.StartsWith("Func`") || name == "Action" || name.StartsWith("Action`")))
+                    return true;
+                if (!t.Is(Table::TypeDef))
+                    return false;
+                StringView baseNs, baseName;
+                return a.TypeName(a.TypeDef(t.Row()).extends, baseNs, baseName) && baseNs == "System" && baseName == "MulticastDelegate";
+            }
+
+            bool IsDelegateType(const TypeSig& sig) const
+            {
+                return (sig.kind == ElementType::GenericInst || sig.kind == ElementType::Class) && IsDelegateTypeToken(sig.token);
+            }
+
+            bool MethodHasThis(u32 row) const
+            {
+                MethodSig sig;
+                return ParseMethodSignature(a.Method(row).signature, sig) && sig.hasThis;
+            }
+
+            static bool SameDelegate(const Method& mt, i32 x, i32 y)
+            {
+                const DelegateInfo& a = mt.delegates[usize(x)];
+                const DelegateInfo& b = mt.delegates[usize(y)];
+                if (a.target != b.target || a.typeArgs.Size() != b.typeArgs.Size() || (a.closure == 0) != (b.closure == 0))
+                    return false;
+                for (usize i = 0; i < a.typeArgs.Size(); i++)
+                    if (!(a.typeArgs[i] == b.typeArgs[i]))
+                        return false;
+                if (!a.closure)
+                    return true;
+                const Expr& ca = mt.fn.exprs[a.closure];
+                const Expr& cb = mt.fn.exprs[b.closure];
+                return ca.kind == cb.kind && ca.index == cb.index;
+            }
+
+            // newobj of a delegate type makes a delegate of the object and the method pointer; Invoke calls its method.
+            bool DelegateCall(Method& mt, StringView member, Array<Item>& args, bool isNew)
+            {
+                if (isNew)
+                {
+                    if (args.Size() != 2 || args[1].kind != ItemKind::Function)
+                        return Fail(mt.name, "a delegate must be made of a lambda, a local function or a static method");
+                    DelegateInfo d = mt.delegates[usize(args[1].index)];
+                    bool hasThis = MethodHasThis(d.target);
+                    if (args[0].kind == ItemKind::Value && hasThis && TypeOf(mt, args[0].e).base == BaseType::Struct)
+                    {
+                        // The closure must be a variable: the lambda writes the captured variables back to it.
+                        ExprId closure = args[0].e;
+                        ExprKind kind = mt.fn.exprs[closure].kind;
+                        if (kind != ExprKind::Local && kind != ExprKind::Param)
+                        {
+                            Type t = TypeOf(mt, closure);
+                            ExprId place = Leaf(mt, ExprKind::Local, NewLocal(mt, t, false), t);
+                            Assign(mt, place, closure);
+                            closure = place;
+                        }
+                        d.closure = closure;
+                    }
+                    else if (args[0].kind != ItemKind::Null || (hasThis && !IsLambdaHolder(a.DeclaringTypeOfMethod(d.target))))
+                        return Fail(mt.name, "a delegate of an instance method is not available in shaders; use a lambda or a static method");
+                    mt.delegates.Push(Move(d));
+                    mt.stack.Push({0, false, ItemKind::Delegate, i32(mt.delegates.Size() - 1)});
+                    return true;
+                }
+                if (member != "Invoke")
+                    return Fail(mt.name, Format("{} of a delegate is not available in shaders; call the delegate", member));
+                if (args.Empty() || args[0].kind != ItemKind::Delegate)
+                    return Fail(mt.name, "only delegates known when the shader compiles can be called: a lambda, a local function or a static "
+                                         "method set in this method or passed by the caller");
+                DelegateInfo d = mt.delegates[usize(args[0].index)];
+                Array<Item> callArgs;
+                if (MethodHasThis(d.target))
+                    callArgs.Push(d.closure ? Item{d.closure, true} : Item{0, false, ItemKind::Null});
+                for (usize i = 1; i < args.Size(); i++)
+                    callArgs.Push(args[i]);
+                return UserCall(mt, d.target, d.typeArgs, callArgs);
             }
 
             // System.Span<T> or System.ReadOnlySpan<T>, which the C# compiler uses to index inline arrays.
@@ -479,7 +636,7 @@ namespace helix::shadercompiler
             static void Flush(Method& mt)
             {
                 for (Item& item : mt.stack)
-                    if (!item.address && ReadsState(mt, item.e))
+                    if (item.kind == ItemKind::Value && !item.address && ReadsState(mt, item.e))
                         Spill(mt, item);
             }
 
@@ -1096,11 +1253,17 @@ namespace helix::shadercompiler
                 return Fail(mt.name, Format("{}.{} is not available in shaders", typeName, member));
             }
 
-            i32 FunctionFor(u32 methodRow, const Array<Type>& typeArgs, StringView caller)
+            i32 FunctionFor(u32 methodRow, const Array<Type>& typeArgs, StringView caller, const Array<Binding>& bindings = Array<Binding>())
             {
                 String key = Format("{}", methodRow);
                 for (const Type& t : typeArgs)
                     FormatAppend(key, ",{}.{}.{}.{}", u32(t.base), u32(t.rows), u32(t.cols), u32(t.structIndex));
+                for (const Binding& b : bindings)
+                {
+                    FormatAppend(key, ";d{}:{}:{}", b.arg, b.target, b.closure);
+                    for (const Type& t : b.typeArgs)
+                        FormatAppend(key, ",{}.{}.{}.{}", u32(t.base), u32(t.rows), u32(t.cols), u32(t.structIndex));
+                }
                 for (const Compiled& c : compiled)
                     if (c.key == key)
                         return c.index;
@@ -1112,7 +1275,7 @@ namespace helix::shadercompiler
                     }
                 building.Push(key);
                 Function fn;
-                if (!TranslateMethod(methodRow, typeArgs, fn))
+                if (!TranslateMethod(methodRow, typeArgs, bindings, fn))
                     return -1;
                 building.Pop();
                 fn.name = Format("f_{}_{}", a.Method(methodRow).name, m.functions.Size());
@@ -1139,7 +1302,8 @@ namespace helix::shadercompiler
                 }
                 MethodSig sig;
                 StringView ns, typeName, member;
-                bool user = token.Is(Table::MethodDef), buffer = false, texture = false, image = false, span = false, inlineArray = false;
+                bool user = token.Is(Table::MethodDef), buffer = false, texture = false, image = false, span = false, inlineArray = false,
+                     delegate = false;
                 if (user)
                 {
                     MethodInfo info = a.Method(token.Row());
@@ -1148,6 +1312,7 @@ namespace helix::shadercompiler
                         return Fail(mt.name, "damaged method signature");
                     // Helpers the C# compiler adds for inline arrays.
                     inlineArray = a.TypeDef(a.DeclaringTypeOfMethod(token.Row())).name == "<PrivateImplementationDetails>" && member.StartsWith("InlineArray");
+                    delegate = IsDelegateTypeToken(Token(Table::TypeDef, a.DeclaringTypeOfMethod(token.Row())));
                 }
                 else if (token.Is(Table::MemberRef))
                 {
@@ -1155,7 +1320,13 @@ namespace helix::shadercompiler
                     member = ref.name;
                     TypeSig spec;
                     bool generic = ref.parent.Is(Table::TypeSpec) && ParseTypeSpec(a.TypeSpecSignature(ref.parent.Row()), spec);
-                    if (generic && IsSpanType(spec))
+                    if (IsDelegateTypeToken(ref.parent))
+                    {
+                        delegate = true;
+                        if (!ParseMethodSignature(ref.signature, sig))
+                            return Fail(mt.name, "damaged method signature");
+                    }
+                    else if (generic && IsSpanType(spec))
                     {
                         span = true;
                         if (!ParseMethodSignature(ref.signature, sig))
@@ -1193,6 +1364,11 @@ namespace helix::shadercompiler
                 for (u32 i = count; i-- > 0;)
                     args[i] = Pop(mt);
 
+                if (delegate)
+                    return DelegateCall(mt, member, args, isNew);
+                for (const Item& item : args)
+                    if (item.kind != ItemKind::Value && (!user || item.kind == ItemKind::Function))
+                        return Fail(mt.name, Format("a delegate is passed to {}; delegates may only be called or passed to methods of the shader", member));
                 if (buffer)
                     return BufferCall(mt, member, args);
                 if (inlineArray || span)
@@ -1207,9 +1383,40 @@ namespace helix::shadercompiler
                         return Fail(mt.name, Format("{}.{}.{} is not available in shaders", ns, typeName, member));
                     return LibraryCall(mt, typeName, member, sig, args, isNew);
                 }
+                if (isNew && IsClosureType(a.DeclaringTypeOfMethod(token.Row())))
+                {
+                    // A new closure: its fields are the captured variables, set by the code that follows.
+                    i32 closure = StructFor(a.DeclaringTypeOfMethod(token.Row()), mt.name);
+                    if (closure < 0)
+                        return false;
+                    Expr zero;
+                    zero.kind = ExprKind::Construct;
+                    zero.type = Type::Struct(u32(closure));
+                    Push(mt, AddExpr(mt.fn, Move(zero)));
+                    return true;
+                }
                 if (isNew)
                     return Fail(mt.name, Format("constructor {} of a user type: use a static method or set the fields", member));
-                i32 index = FunctionFor(token.Row(), typeArgs, mt.name);
+                return UserCall(mt, token.Row(), typeArgs, args);
+            }
+
+            // A call of a method of the shader assembly. Delegate arguments select the compiled form of the callee and pass
+            // their closure; a null `this` (lambdas without captures) passes nothing.
+            bool UserCall(Method& mt, u32 row, const Array<Type>& typeArgs, Array<Item>& args)
+            {
+                Array<Binding> bindings;
+                for (usize i = 0; i < args.Size(); i++)
+                {
+                    if (args[i].kind != ItemKind::Delegate)
+                        continue;
+                    const DelegateInfo& d = mt.delegates[usize(args[i].index)];
+                    Binding& b = bindings.Emplace();
+                    b.arg = u32(i);
+                    b.target = d.target;
+                    b.typeArgs = d.typeArgs;
+                    b.closure = d.closure ? i32(TypeOf(mt, d.closure).structIndex) : -1;
+                }
+                i32 index = FunctionFor(row, typeArgs, mt.name, bindings);
                 if (index < 0)
                     return false;
                 const Function& callee = m.functions[usize(index)];
@@ -1218,11 +1425,24 @@ namespace helix::shadercompiler
                 e.index = u32(index);
                 e.type = callee.returnType;
                 bool writes = false;
+                usize p = 0;
                 for (usize i = 0; i < args.Size(); i++)
                 {
-                    ParamMode mode = callee.params[i].mode;
+                    ExprId value = args[i].e;
+                    if (args[i].kind == ItemKind::Null)
+                        continue;
+                    if (args[i].kind == ItemKind::Delegate)
+                    {
+                        value = mt.delegates[usize(args[i].index)].closure;
+                        if (!value)
+                            continue;
+                    }
+                    if (p >= callee.params.Size())
+                        return Fail(mt.name, "the arguments of a call do not match its parameters");
+                    ParamMode mode = callee.params[p].mode;
                     writes = writes || mode != ParamMode::In;
-                    e.args.Push(mode == ParamMode::In ? Coerce(mt, args[i].e, callee.params[i].type) : args[i].e);
+                    e.args.Push(mode == ParamMode::In ? Coerce(mt, value, callee.params[p].type) : value);
+                    p++;
                 }
                 ExprId call = AddExpr(mt.fn, Move(e));
                 if (callee.returnType.IsVoid())
@@ -1256,12 +1476,24 @@ namespace helix::shadercompiler
                     info.hasEntry = true;
                     for (const Item& item : mt.stack)
                     {
+                        if (item.kind != ItemKind::Value)
+                        {
+                            info.entry.Push(item);
+                            continue;
+                        }
                         Type t = TypeOf(mt, item.e);
                         info.entry.Push({item.address ? item.e : Leaf(mt, ExprKind::Local, NewLocal(mt, t, true), t), item.address});
                     }
                 }
                 for (usize i = 0; i < mt.stack.Size() && i < info.entry.Size(); i++)
                 {
+                    if (mt.stack[i].kind != ItemKind::Value || info.entry[i].kind != ItemKind::Value)
+                    {
+                        if (mt.stack[i].kind != info.entry[i].kind ||
+                            (mt.stack[i].index != info.entry[i].index && !(mt.stack[i].kind == ItemKind::Delegate && SameDelegate(mt, mt.stack[i].index, info.entry[i].index))))
+                            Fail(mt.name, "a delegate depends on a condition; shaders call delegates that are known when they compile");
+                        continue;
+                    }
                     if (mt.stack[i].address)
                         continue;
                     Stmt& s = mt.stmts->Emplace();
@@ -1279,6 +1511,13 @@ namespace helix::shadercompiler
                 auto local = [&](u32 i) { return Leaf(mt, ExprKind::Local, i, mt.fn.locals[i].type); };
                 // A ref local, or a Span over an inline array, stands for the place it was set to.
                 auto loadLocal = [&](u32 slot) {
+                    if (slot < mt.isRef.Size() && mt.isRef[slot] == 3)
+                    {
+                        if (mt.localDelegate[slot] < 0)
+                            return Fail(mt.name, "a delegate is used before it is set");
+                        mt.stack.Push({0, false, ItemKind::Delegate, mt.localDelegate[slot]});
+                        return true;
+                    }
                     if (slot >= mt.isRef.Size() || !mt.isRef[slot])
                     {
                         Push(mt, local(slot));
@@ -1291,6 +1530,19 @@ namespace helix::shadercompiler
                 };
                 auto storeLocal = [&](u32 slot) {
                     Item item = Pop(mt);
+                    if (slot < mt.isRef.Size() && mt.isRef[slot] == 3)
+                    {
+                        if (item.kind != ItemKind::Delegate)
+                            return Fail(mt.name, "a delegate variable must be set to a lambda, a local function or a static method");
+                        i32 old = mt.localDelegate[slot];
+                        if (old >= 0 && !SameDelegate(mt, old, item.index))
+                            return Fail(mt.name, "a delegate variable is set to two different methods; shaders call delegates that are known when "
+                                                 "they compile");
+                        mt.localDelegate[slot] = item.index;
+                        return true;
+                    }
+                    if (item.kind != ItemKind::Value)
+                        return Fail(mt.name, "a delegate is stored in a variable of another type");
                     if (slot >= mt.isRef.Size() || !mt.isRef[slot])
                     {
                         Assign(mt, local(slot), item.e);
@@ -1301,7 +1553,19 @@ namespace helix::shadercompiler
                     mt.refTarget[slot] = item.e;
                     return true;
                 };
-                auto param = [&](u32 i) { return Leaf(mt, ExprKind::Param, i, mt.fn.params[i].type); };
+                // IL arguments map to parameters; a delegate argument stands for its delegate.
+                auto loadArg = [&](u32 k, bool address) {
+                    if (k < mt.argDelegate.Size() && mt.argDelegate[k] >= 0)
+                    {
+                        mt.stack.Push({0, false, ItemKind::Delegate, mt.argDelegate[k]});
+                        return true;
+                    }
+                    if (k >= mt.argParam.Size() || mt.argParam[k] < 0)
+                        return Fail(mt.name, "this of a lambda without captures is read");
+                    u32 p = u32(mt.argParam[k]);
+                    Push(mt, Leaf(mt, ExprKind::Param, p, mt.fn.params[p].type), address || mt.fn.params[p].mode != ParamMode::In);
+                    return true;
+                };
                 auto target = [&](u32 offset) { return offset < mt.blockOfOffset.Size() ? mt.blockOfOffset[offset] : -1; };
                 auto finish = [&](FlowBlock::End end, ExprId value, i32 yes, i32 no) {
                     // Blocks may have been appended, so the block is looked up again.
@@ -1334,8 +1598,8 @@ namespace helix::shadercompiler
                     bool handled = false;
                     if (op >= u32(Opcode::Ldarg0) && op <= u32(Opcode::Ldarg3))
                     {
-                        u32 p = op - u32(Opcode::Ldarg0);
-                        Push(mt, param(p), mt.fn.params[p].mode != ParamMode::In);
+                        if (!loadArg(op - u32(Opcode::Ldarg0), false))
+                            return false;
                         handled = true;
                     }
                     else if (op >= u32(Opcode::Ldloc0) && op <= u32(Opcode::Ldloc3))
@@ -1361,13 +1625,46 @@ namespace helix::shadercompiler
                     {
                     case Opcode::Nop: break;
                     case Opcode::LdargS: case Opcode::Ldarg:
-                        Push(mt, param(u32(in.value)), mt.fn.params[u32(in.value)].mode != ParamMode::In);
+                        if (!loadArg(u32(in.value), false))
+                            return false;
                         break;
-                    case Opcode::LdargaS: case Opcode::Ldarga: Push(mt, param(u32(in.value)), true); break;
+                    case Opcode::LdargaS: case Opcode::Ldarga:
+                        if (!loadArg(u32(in.value), true))
+                            return false;
+                        break;
                     case Opcode::StargS: case Opcode::Starg:
                     {
-                        ExprId value = Pop(mt).e;
-                        Assign(mt, param(u32(in.value)), value);
+                        u32 k = u32(in.value);
+                        Item value = Pop(mt);
+                        if (k >= mt.argParam.Size() || mt.argParam[k] < 0 || value.kind != ItemKind::Value)
+                            return Fail(mt.name, "a delegate parameter cannot be changed");
+                        u32 p = u32(mt.argParam[k]);
+                        Assign(mt, Leaf(mt, ExprKind::Param, p, mt.fn.params[p].type), value.e);
+                        break;
+                    }
+                    case Opcode::Ldnull: mt.stack.Push({0, false, ItemKind::Null}); break;
+                    case Opcode::Ldftn:
+                    {
+                        Token method(u32(in.value));
+                        DelegateInfo d;
+                        if (method.Is(Table::MethodSpec))
+                        {
+                            Array<TypeSig> sigs;
+                            if (!ParseMethodSpec(a.GetBlob(a.Cell(Table::MethodSpec, method.Row(), 1)), sigs))
+                                return Fail(mt.name, "damaged generic method instantiation");
+                            for (const TypeSig& s : sigs)
+                            {
+                                bool byRef = false;
+                                if (!MapType(s, &mt, d.typeArgs.Emplace(), byRef, mt.name))
+                                    return Fail(mt.name, "a generic method is used with a type that shaders cannot use");
+                            }
+                            method = a.CodedCell(Table::MethodSpec, method.Row(), 0);
+                        }
+                        if (!method.Is(Table::MethodDef))
+                            return Fail(mt.name, "a delegate of a method of another assembly is not available in shaders");
+                        d.target = method.Row();
+                        mt.delegates.Push(Move(d));
+                        mt.stack.Push({0, false, ItemKind::Function, i32(mt.delegates.Size() - 1)});
                         break;
                     }
                     case Opcode::LdlocS: case Opcode::Ldloc:
@@ -1396,6 +1693,12 @@ namespace helix::shadercompiler
                     case Opcode::Dup:
                     {
                         Item top = Pop(mt);
+                        if (top.kind != ItemKind::Value)
+                        {
+                            mt.stack.Push(top);
+                            mt.stack.Push(top);
+                            break;
+                        }
                         ExprKind kind = mt.fn.exprs[top.e].kind;
                         bool simple = top.address || kind == ExprKind::ConstFloat || kind == ExprKind::ConstInt || kind == ExprKind::ConstBool ||
                                       kind == ExprKind::Local || kind == ExprKind::Param;
@@ -1462,16 +1765,25 @@ namespace helix::shadercompiler
                     }
                     case Opcode::Stfld:
                     {
-                        ExprId value = Pop(mt).e;
+                        Item value = Pop(mt);
                         Item object = Pop(mt);
+                        if (value.kind != ItemKind::Value)
+                            return Fail(mt.name, "a delegate cannot be stored in a field; it may only be called or passed to methods of the shader");
                         ExprId field;
                         if (!FieldExpr(mt, Token(u32(in.value)), object.e, field))
                             return false;
-                        Assign(mt, field, value);
+                        Assign(mt, field, value.e);
                         break;
                     }
                     case Opcode::Ldsfld: case Opcode::Ldsflda:
                     {
+                        Token token(u32(in.value));
+                        if (token.Is(Table::Field) && IsLambdaHolder(a.DeclaringTypeOfField(token.Row())))
+                        {
+                            // The instance lambdas without captures are called on; they never read it.
+                            mt.stack.Push({0, false, ItemKind::Null});
+                            break;
+                        }
                         Item item;
                         if (!StaticField(mt, Token(u32(in.value)), item))
                             return false;
@@ -1499,7 +1811,7 @@ namespace helix::shadercompiler
                         Assign(mt, place, AddExpr(mt.fn, Move(zero)));
                         break;
                     }
-                    case Opcode::Call: case Opcode::Newobj:
+                    case Opcode::Call: case Opcode::Callvirt: case Opcode::Newobj:
                         if (!Call(mt, Token(u32(in.value)), in.opcode == Opcode::Newobj))
                             return false;
                         break;
@@ -1592,7 +1904,7 @@ namespace helix::shadercompiler
                 return Fail(mt.name, "a block ends without a successor");
             }
 
-            bool TranslateMethod(u32 row, const Array<Type>& typeArgs, Function& out)
+            bool TranslateMethod(u32 row, const Array<Type>& typeArgs, const Array<Binding>& bindings, Function& out)
             {
                 Method mt;
                 MethodInfo info = a.Method(row);
@@ -1607,7 +1919,13 @@ namespace helix::shadercompiler
                 if (!MapType(mt.sig.returnType, &mt, mt.fn.returnType, byRef, mt.name) || byRef)
                     return Fail(mt.name, "the return type cannot be used in shaders");
 
-                if (mt.sig.hasThis)
+                if (mt.sig.hasThis && IsLambdaHolder(a.DeclaringTypeOfMethod(row)))
+                {
+                    // Lambdas without captures are instance methods of a class without fields; this is never read.
+                    mt.argParam.Push(-1);
+                    mt.argDelegate.Push(-1);
+                }
+                else if (mt.sig.hasThis)
                 {
                     i32 self = StructFor(a.DeclaringTypeOfMethod(row), mt.name);
                     if (self < 0)
@@ -1616,9 +1934,40 @@ namespace helix::shadercompiler
                     v.name = "self";
                     v.type = Type::Struct(u32(self));
                     v.mode = ParamMode::InOut;
+                    mt.argParam.Push(0);
+                    mt.argDelegate.Push(-1);
                 }
                 for (usize i = 0; i < mt.sig.params.Size(); i++)
                 {
+                    u32 arg = u32(mt.argParam.Size());
+                    if (IsDelegateType(mt.sig.params[i]))
+                    {
+                        const Binding* b = nullptr;
+                        for (const Binding& x : bindings)
+                            if (x.arg == arg)
+                                b = &x;
+                        if (!b)
+                            return Fail(mt.name, Format("parameter {} is a delegate; it must receive a lambda, a local function or a static method "
+                                                        "known when the shader compiles",
+                                                        i + 1));
+                        DelegateInfo d;
+                        d.target = b->target;
+                        d.typeArgs = b->typeArgs;
+                        mt.argParam.Push(-1);
+                        if (b->closure >= 0)
+                        {
+                            Variable& v = mt.fn.params.Emplace();
+                            v.name = Format("closure{}", i);
+                            v.type = Type::Struct(u32(b->closure));
+                            v.mode = ParamMode::InOut;
+                            d.closure = Leaf(mt, ExprKind::Param, u32(mt.fn.params.Size() - 1), v.type);
+                        }
+                        mt.delegates.Push(Move(d));
+                        mt.argDelegate.Push(i32(mt.delegates.Size() - 1));
+                        continue;
+                    }
+                    mt.argParam.Push(i32(mt.fn.params.Size()));
+                    mt.argDelegate.Push(-1);
                     Variable& v = mt.fn.params.Emplace();
                     byRef = false;
                     if (!MapType(mt.sig.params[i], &mt, v.type, byRef, mt.name))
@@ -1647,13 +1996,16 @@ namespace helix::shadercompiler
                         Type t;
                         byRef = false;
                         // A Span local only ever views an inline array; it stands for the array.
-                        bool span = IsSpanType(s);
-                        if (span && !MapType(s.args[0], &mt, t, byRef, mt.name))
+                        bool span = IsSpanType(s), delegate = IsDelegateType(s);
+                        if (delegate)
+                            t = kInt;
+                        else if (span && !MapType(s.args[0], &mt, t, byRef, mt.name))
                             t = kInt;
                         else if (!span && !MapType(s, &mt, t, byRef, mt.name))
                             return Fail(mt.name, "a local variable has a type that shaders cannot use");
-                        mt.isRef.Push(span ? 2 : byRef ? 1 : 0);
+                        mt.isRef.Push(delegate ? 3 : span ? 2 : byRef ? 1 : 0);
                         mt.refTarget.Push(0);
+                        mt.localDelegate.Push(-1);
                         NewLocal(mt, t, false);
                     }
                 }
@@ -1668,6 +2020,37 @@ namespace helix::shadercompiler
                     if (!DecodeInstruction(body.code, at, in))
                         return Fail(mt.name, "unknown IL instruction");
                     mt.code.Push(in);
+                }
+                // The C# compiler caches lambdas without captures and method groups in static fields:
+                //   ldsfld cache; dup; brtrue L; pop; <make the delegate>; dup; stsfld cache; [br L;] L:
+                // Shaders make the delegate every time, which is the same value.
+                for (usize i = 0; i + 3 < mt.code.Size(); i++)
+                {
+                    const Instruction& c = mt.code[i];
+                    Token cache(u32(c.value));
+                    if (c.opcode != Opcode::Ldsfld || !cache.Is(Table::Field) || !IsLambdaHolder(a.DeclaringTypeOfField(cache.Row())) ||
+                        mt.code[i + 1].opcode != Opcode::Dup || (mt.code[i + 2].opcode != Opcode::Brtrue && mt.code[i + 2].opcode != Opcode::BrtrueS) ||
+                        mt.code[i + 3].opcode != Opcode::Pop)
+                        continue;
+                    u32 label = mt.code[i + 2].target;
+                    for (usize j = i + 4; j + 2 < mt.code.Size(); j++)
+                        if (mt.code[j].opcode == Opcode::Dup && mt.code[j + 1].opcode == Opcode::Stsfld && mt.code[j + 1].value == c.value)
+                        {
+                            const Instruction& after = mt.code[j + 2];
+                            bool jumps = (after.opcode == Opcode::Br || after.opcode == Opcode::BrS) && after.target == label;
+                            if (after.offset == label || jumps)
+                                for (usize k : {i, i + 1, i + 2, i + 3, j, j + 1})
+                                {
+                                    mt.code[k].opcode = Opcode::Nop;
+                                    mt.code[k].operand = OperandKind::None;
+                                }
+                            break;
+                        }
+                }
+                for (const Instruction& decoded : mt.code)
+                {
+                    in = decoded;
+                    u32 at = in.offset + in.size;
                     bool branch = in.operand == OperandKind::Branch8 || in.operand == OperandKind::Branch32;
                     if (branch || in.opcode == Opcode::Switch || in.opcode == Opcode::Ret)
                         leader[at] = 1;
@@ -1720,6 +2103,8 @@ namespace helix::shadercompiler
                             if (s >= 0)
                                 work.Push(u32(s));
                 }
+                if (!error.Empty())
+                    return false;
                 for (FlowBlock& block : mt.blocks)
                     for (i32& s : block.succ)
                         if (s >= i32(mt.blocks.Size()))

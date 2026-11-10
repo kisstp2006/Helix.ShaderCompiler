@@ -194,6 +194,14 @@ HX_TEST(Glsl, EmitsComputeShadersWithStorageBuffers)
     HX_CHECK(StringView(desktop.source).Contains("vec4[3]") && StringView(desktop.source).Contains("float[4]") &&
              StringView(mobile.source).Contains("vec4[3]"));
 
+    // Delegates must be known when the shader compiles, and a closure must hold the variables of one scope.
+    HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(rejected, "PicksLambda"), Stage::Fragment, module, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("delegate depends on a condition"));
+    HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(rejected, "NestedCapture"), Stage::Fragment, module, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("two scopes"));
+
     // Local functions and their closure struct get names that are valid GLSL identifiers.
     u32 locals = a.FindType("Helix.ShaderTests.Cases", "LocalFunctions");
     HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(locals, "Fragment"), Stage::Fragment, module, error) &&
