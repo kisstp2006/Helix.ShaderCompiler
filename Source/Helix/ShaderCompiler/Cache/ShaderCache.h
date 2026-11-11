@@ -12,7 +12,7 @@ namespace helix::shadercompiler
 {
     // Part of every cache key. Raise it whenever a backend changes what it writes for the same module, so results of
     // older builds on disk are not used.
-    inline constexpr u32 kShaderCompilerVersion = 1;
+    inline constexpr u32 kShaderCompilerVersion = 2;
 
     enum class ShaderTarget : u8
     {

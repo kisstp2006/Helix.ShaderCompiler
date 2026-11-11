@@ -183,6 +183,13 @@ HX_TEST(Glsl, EmitsComputeShadersWithStorageBuffers)
     std::printf("    %s\n", error.CStr());
     HX_CHECK(StringView(error).Contains("fixed buffer") && StringView(error).Contains("[InlineArray]"));
 
+    // Structs are named after their qualified C# names, so a uniform block reads the same in every stage that uses it
+    // (linkers refuse a block whose member types differ by name).
+    u32 uniforms = a.FindType("Helix.ShaderTests.Cases", "Uniforms");
+    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(uniforms, "Fragment"), Stage::Fragment, module, error) &&
+               EmitGlsl(module, GlslTarget::Glsl330, desktop, error));
+    HX_CHECK(StringView(desktop.source).Contains("S_Helix_ShaderTests_Cases_Uniforms_Params g_data;"));
+
     // Inline arrays become GLSL arrays in locals, structs and uniform blocks.
     u32 arrays = a.FindType("Helix.ShaderTests.Cases", "InlineArrays");
     HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(arrays, "Fragment"), Stage::Fragment, module, error) &&

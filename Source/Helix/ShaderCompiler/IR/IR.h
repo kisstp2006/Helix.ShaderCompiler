@@ -97,6 +97,8 @@ namespace helix::shadercompiler
     struct StructType
     {
         String name;
+        // Namespace, enclosing types and name: the same in every module (and so in every stage) that uses the type.
+        String qualifiedName;
         Array<StructField> fields;
     };
 

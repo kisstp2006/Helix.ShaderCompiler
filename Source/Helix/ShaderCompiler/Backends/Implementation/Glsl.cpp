@@ -54,12 +54,27 @@ namespace helix::shadercompiler
                 return es && inner.half ? Format("mediump {}", TypeName(t)) : TypeName(t);
             }
 
+            // A struct's name from its qualified C# name, so a uniform block's type reads the same in both stages; the
+            // index is added only when two structs of the module have the same name.
+            String StructName(u32 index) const
+            {
+                const StructType& s = m.structs[index];
+                StringView name = s.qualifiedName.Empty() ? StringView(s.name) : StringView(s.qualifiedName);
+                for (u32 i = 0; i < m.structs.Size(); i++)
+                {
+                    const StructType& o = m.structs[i];
+                    if (i != index && (o.qualifiedName.Empty() ? StringView(o.name) : StringView(o.qualifiedName)) == name)
+                        return Format("S_{}_{}", Ident(name), index);
+                }
+                return Format("S_{}", Ident(name));
+            }
+
             String TypeName(Type t) const
             {
                 static constexpr const char* kScalar[] = {"void", "bool", "int", "uint", "float"};
                 static constexpr const char* kVector[] = {"", "bvec", "ivec", "uvec", "vec"};
                 if (t.base == BaseType::Struct)
-                    return Format("S_{}_{}", Ident(m.structs[t.structIndex].name), u32(t.structIndex));
+                    return StructName(t.structIndex);
                 if (t.base == BaseType::Array)
                     return Format("{}[{}]", TypeName(m.arrays[t.structIndex].element), m.arrays[t.structIndex].length);
                 if (t.IsTexture())

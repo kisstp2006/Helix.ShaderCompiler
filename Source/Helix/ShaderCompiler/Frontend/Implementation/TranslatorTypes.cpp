@@ -127,6 +127,26 @@ namespace helix::shadercompiler::frontend
         TypeDefInfo t = a->TypeDef(typeRow);
         StructType s;
         s.name = t.name;
+        // Namespace.Outer.Inner: what names the type in every stage's code.
+        {
+            Array<StringView> parts;
+            parts.Push(t.name);
+            StringView ns = t.nameSpace;
+            for (u32 outer = t.enclosingType, depth = 0; outer != 0 && depth < 16; depth++)
+            {
+                TypeDefInfo o = a->TypeDef(outer);
+                parts.Push(o.name);
+                ns = o.nameSpace;
+                outer = o.enclosingType;
+            }
+            s.qualifiedName = String(ns);
+            for (usize i = parts.Size(); i-- > 0;)
+            {
+                if (!s.qualifiedName.Empty())
+                    s.qualifiedName.Append('.');
+                s.qualifiedName.Append(parts[i]);
+            }
+        }
         for (u32 f = t.fieldBegin; f < t.fieldEnd; f++)
         {
             FieldInfo field = a->Field(f);
