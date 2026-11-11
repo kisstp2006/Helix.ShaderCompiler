@@ -13,7 +13,8 @@ namespace helix::shadercompiler
     {
         String name;
         Type type;
-        // Bytes from the start of the block; the same in C#, in std140 and in a Direct3D constant buffer.
+        // Bytes from the start of the block in std140, the layout of the block on every target (array elements on 16 bytes);
+        // the C# struct may lie otherwise.
         u32 offset = 0;
         u32 size = 0;
     };

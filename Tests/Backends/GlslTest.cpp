@@ -179,11 +179,6 @@ HX_TEST(Glsl, EmitsComputeShadersWithStorageBuffers)
     std::printf("    %s\n", error.CStr());
     HX_CHECK(StringView(error).Contains("does not fit"));
 
-    // Uniform array elements lie 16 bytes apart on the GPU, so scalar elements do not match C#.
-    HX_CHECK(TranslateEntryPoint(a, a.FindMethod(rejected, "ScalarArray"), Stage::Fragment, module, error) &&
-             !EmitGlsl(module, GlslTarget::Glsl330, desktop, error));
-    std::printf("    %s\n", error.CStr());
-    HX_CHECK(StringView(error).Contains("scalarBlock.values") && StringView(error).Contains("4 bytes in C# but 16"));
     HX_CHECK(!TranslateEntryPoint(a, a.FindMethod(rejected, "FixedBuffer"), Stage::Fragment, module, error));
     std::printf("    %s\n", error.CStr());
     HX_CHECK(StringView(error).Contains("fixed buffer") && StringView(error).Contains("[InlineArray]"));
@@ -276,10 +271,6 @@ HX_TEST(Glsl, RejectsWhatTheGpuCannotRun)
     String error;
     HX_CHECK(!Compile(a, a.FindMethod(rejected, "Recursive"), Stage::Fragment, GlslTarget::Glsl330, shader, error));
     HX_CHECK(StringView(error).Contains("recursive"));
-    std::printf("    %s\n", error.CStr());
-    // float then float3: C# packs them, std140 aligns the vector to 16 bytes.
-    HX_CHECK(!Compile(a, a.FindMethod(rejected, "Layout"), Stage::Fragment, GlslTarget::Glsl330, shader, error));
-    HX_CHECK(StringView(error).Contains("settings.direction") && StringView(error).Contains("padding"));
     std::printf("    %s\n", error.CStr());
     HX_CHECK(!Compile(a, a.FindMethod(rejected, "NoTarget"), Stage::Fragment, GlslTarget::Glsl330, shader, error));
     HX_CHECK(StringView(error).Contains("return value"));

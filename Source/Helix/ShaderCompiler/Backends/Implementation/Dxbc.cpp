@@ -1349,11 +1349,16 @@ namespace helix::shadercompiler
                     const Global& g = m.globals[e.index];
                     if (g.kind != GlobalKind::Uniform)
                         return Fail(Format("{} can only be used through its methods", g.name));
+                    // Every leaf at its std140 offset: no leaf crosses a 16 byte register.
                     Array<Type> leaves;
                     Leaves(e.type, leaves);
-                    u32 offset = 0;
-                    for (const Type& leaf : leaves)
+                    Array<u32> offsets;
+                    Std140Leaves(m, e.type, 0, offsets);
+                    u32 end = 0;
+                    for (usize k = 0; k < leaves.Size(); k++)
                     {
+                        const Type& leaf = leaves[k];
+                        u32 offset = offsets[k];
                         Src s;
                         s.kind = Src::Buffer;
                         s.reg = g.slot;
@@ -1363,9 +1368,9 @@ namespace helix::shadercompiler
                         for (u32 i = 0; i < 4; i++)
                             s.swizzle[i] = u8(Min(offset % 16 / 4 + i, 3u));
                         out.parts.Push(s);
-                        offset += 4u * leaf.rows;
+                        end = Max(end, offset + 4u * leaf.rows);
                     }
-                    u32 size = u32(AlignUp(offset, 16)) / 16;
+                    u32 size = u32(AlignUp(end, 16)) / 16;
                     bool known = false;
                     for (Resource& r : buffers)
                         if (r.slot == g.slot)
@@ -2009,8 +2014,10 @@ namespace helix::shadercompiler
                                                            : Format("struct {} of {} registers, more than the {} of a D3D11 shader", m.structs[i].name, n, kMaxRegisters));
                 for (const Global& g : m.globals)
                 {
-                    if (g.kind == GlobalKind::Uniform && (g.type.base != BaseType::Struct || !CheckUniformLayout(m, g.type, g.name, 0, 0, error)))
+                    if (g.kind == GlobalKind::Uniform && g.type.base != BaseType::Struct)
                         return Fail(Format("uniform {} must be a struct", g.name));
+                    if (g.kind == GlobalKind::Uniform && !CheckUniformLayout(m, g.type, g.name, error))
+                        return false;
                     if (g.kind == GlobalKind::Storage && g.type.base == BaseType::Buffer && !CheckBufferLayout(m, g.element, g.name, error))
                         return false;
                 }

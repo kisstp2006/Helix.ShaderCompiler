@@ -7,38 +7,34 @@ namespace helix::shadercompiler
 {
     namespace
     {
-        // Lists the members of a uniform struct; the layout was checked, so offsets follow the fields in order.
-        void Members(const Module& m, Type t, StringView path, u32& offset, Array<ReflectedMember>& out)
+        // Lists the members of a uniform struct at their std140 offsets (array elements on 16 bytes).
+        void Members(const Module& m, Type t, StringView path, u32 base, Array<ReflectedMember>& out)
         {
+            u32 offset = base;
             for (const StructField& f : m.structs[t.structIndex].fields)
             {
                 String name = path.Empty() ? String(f.name) : Format("{}.{}", path, f.name);
+                UniformLayout l = Std140(m, f.type);
+                offset = u32(AlignUp(offset, l.align));
                 if (f.type.base == BaseType::Struct)
-                {
                     Members(m, f.type, name, offset, out);
-                    continue;
-                }
-                if (f.type.base == BaseType::Array)
+                else if (f.type.base == BaseType::Array)
                 {
-                    // Elements as name[i]; the layout check made them back to back.
+                    // Elements as name[i].
                     const ArrayType& a = m.arrays[f.type.structIndex];
+                    u32 stride = u32(AlignUp(Std140(m, a.element).size, 16));
                     for (u32 i = 0; i < a.length; i++)
                     {
                         String element = Format("{}[{}]", name, i);
                         if (a.element.base == BaseType::Struct)
-                            Members(m, a.element, element, offset, out);
+                            Members(m, a.element, element, offset + i * stride, out);
                         else
-                        {
-                            u32 size = SequentialSize(m, a.element);
-                            out.Push({Move(element), a.element, offset, size});
-                            offset += size;
-                        }
+                            out.Push({Move(element), a.element, offset + i * stride, SequentialSize(m, a.element)});
                     }
-                    continue;
                 }
-                u32 size = SequentialSize(m, f.type);
-                out.Push({Move(name), f.type, offset, size});
-                offset += size;
+                else
+                    out.Push({Move(name), f.type, offset, SequentialSize(m, f.type)});
+                offset += l.size;
             }
         }
 
@@ -121,14 +117,13 @@ namespace helix::shadercompiler
                     error = Format("uniform {} must be a struct", g.name);
                     return false;
                 }
-                if (!CheckUniformLayout(m, g.type, g.name, 0, 0, error))
+                if (!CheckUniformLayout(m, g.type, g.name, error))
                     return false;
                 ReflectedBlock block;
                 block.name = g.name;
                 block.slot = g.slot;
-                u32 offset = 0;
-                Members(m, g.type, "", offset, block.members);
-                block.size = u32(AlignUp(offset, 16));
+                Members(m, g.type, "", 0, block.members);
+                block.size = u32(AlignUp(Std140(m, g.type).size, 16));
                 if (const ReflectedBlock* other = FindSlot(out.blocks, g.slot))
                 {
                     error = Format("uniform blocks {} and {} both use slot {}", other->name, g.name, g.slot);

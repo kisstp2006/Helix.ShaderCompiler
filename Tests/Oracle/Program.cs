@@ -70,14 +70,84 @@ internal static class Program
         return ((byte[])bytesOf.Invoke(null, new object[] { items })!, Marshal.SizeOf(element));
     }
 
+    // A uniform struct as the GPU reads it: std140, every array element on 16 bytes, from the C# value's own layout.
+    private static bool IsLeaf(Type t) => t.IsPrimitive || t.GetCustomAttribute<IntrinsicTypeAttribute>() != null;
+
+    private static int SizeOf(Type t) =>
+        (int)typeof(System.Runtime.CompilerServices.Unsafe).GetMethod("SizeOf", Type.EmptyTypes)!.MakeGenericMethod(t).Invoke(null, null)!;
+
+    private static FieldInfo[] FieldsOf(Type t) =>
+        t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).OrderBy(f => f.MetadataToken).ToArray();
+
+    private static int AlignUp(int v, int a) => (v + a - 1) / a * a;
+
+    private static (int align, int size) Std140(Type t)
+    {
+        if (IsLeaf(t))
+        {
+            int size = SizeOf(t);
+            return (size <= 4 ? 4 : size == 8 ? 8 : 16, size);
+        }
+        var inline = t.GetCustomAttribute<System.Runtime.CompilerServices.InlineArrayAttribute>();
+        if (inline != null)
+        {
+            Type element = FieldsOf(t)[0].FieldType;
+            var e = Std140(element);
+            return (Math.Max(e.align, 16), AlignUp(e.size, 16) * inline.Length);
+        }
+        int offset = 0, align = 16;
+        foreach (FieldInfo f in FieldsOf(t))
+        {
+            var l = Std140(f.FieldType);
+            offset = AlignUp(offset, l.align) + l.size;
+            align = Math.Max(align, l.align);
+        }
+        return (align, AlignUp(offset, align));
+    }
+
+    private static void CopyStd140(byte[] source, int from, byte[] target, int to, Type t)
+    {
+        if (IsLeaf(t))
+        {
+            Array.Copy(source, from, target, to, SizeOf(t));
+            return;
+        }
+        var inline = t.GetCustomAttribute<System.Runtime.CompilerServices.InlineArrayAttribute>();
+        if (inline != null)
+        {
+            Type element = FieldsOf(t)[0].FieldType;
+            int stride = AlignUp(Std140(element).size, 16), size = SizeOf(element);
+            for (int i = 0; i < inline.Length; i++)
+                CopyStd140(source, from + i * size, target, to + i * stride, element);
+            return;
+        }
+        int offset = 0, sequential = from;
+        foreach (FieldInfo f in FieldsOf(t))
+        {
+            var l = Std140(f.FieldType);
+            offset = AlignUp(offset, l.align);
+            CopyStd140(source, sequential, target, to + offset, f.FieldType);
+            offset += l.size;
+            sequential += SizeOf(f.FieldType);
+        }
+    }
+
+    private static byte[] UniformBytes(object value, Type t)
+    {
+        MethodInfo bytesOf = typeof(Program).GetMethod(nameof(Bytes), BindingFlags.NonPublic | BindingFlags.Static)!.MakeGenericMethod(t);
+        byte[] raw = (byte[])bytesOf.Invoke(null, new[] { value })!;
+        byte[] gpu = new byte[AlignUp(Std140(t).size, 16)];
+        CopyStd140(raw, 0, gpu, 0, t);
+        return gpu;
+    }
+
     private static void WriteUniforms(BinaryWriter w, FieldInfo[] fields)
     {
         FieldInfo[] uniforms = fields.Where(f => f.GetCustomAttribute<UniformAttribute>() != null).ToArray();
         w.Write((uint)uniforms.Length);
         foreach (FieldInfo f in uniforms)
         {
-            MethodInfo bytesOf = typeof(Program).GetMethod(nameof(Bytes), BindingFlags.NonPublic | BindingFlags.Static)!.MakeGenericMethod(f.FieldType);
-            byte[] bytes = (byte[])bytesOf.Invoke(null, new[] { f.GetValue(null) })!;
+            byte[] bytes = UniformBytes(f.GetValue(null)!, f.FieldType);
             w.Write((uint)f.GetCustomAttribute<UniformAttribute>()!.Slot);
             w.Write((uint)bytes.Length);
             w.Write(bytes);

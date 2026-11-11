@@ -104,7 +104,8 @@ HX_TEST(Dxbc, RejectsWhatTheGpuCannotRun)
     HX_REQUIRE(rejected != 0);
     DxbcShader shader;
     String error;
-    HX_CHECK(!Compile(a, a.FindMethod(rejected, "Layout"), Stage::Fragment, shader, error));
+    // A uniform block without a fixed GPU layout: a half member.
+    HX_CHECK(!Compile(a, a.FindMethod(rejected, "HalfUniform"), Stage::Fragment, shader, error));
     std::printf("    %s\n", error.CStr());
-    HX_CHECK(StringView(error).Contains("settings.direction") && StringView(error).Contains("byte 16"));
+    HX_CHECK(StringView(error).Contains("halfBlock.tint") && StringView(error).Contains("half"));
 }

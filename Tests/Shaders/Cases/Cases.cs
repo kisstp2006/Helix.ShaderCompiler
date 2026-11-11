@@ -871,6 +871,70 @@ public static class InlineArrays
     }
 }
 
+[System.Runtime.CompilerServices.InlineArray(4)]
+public struct Floats4
+{
+    private float element;
+}
+
+[System.Runtime.CompilerServices.InlineArray(3)]
+public struct Pairs3
+{
+    private float2 element;
+}
+
+[System.Runtime.CompilerServices.InlineArray(2)]
+public struct Ints2
+{
+    private int element;
+}
+
+/// <summary>A uniform block by the GPU rules where C# lies otherwise: a float3 after a float, float, float2 and int arrays
+/// (each element on 16 bytes) and members after them, at constant and computed indices.</summary>
+public static class UniformLayouts
+{
+    public struct Packed
+    {
+        public float weight;
+        public float3 direction;
+        public Floats4 weights;
+        public float after;
+        public Pairs3 offsets;
+        public Ints2 counts;
+        public float2 tail;
+    }
+
+    [Uniform(0)] public static Packed data;
+
+    public static void Setup()
+    {
+        data.weight = 0.5f;
+        data.direction = new float3(0.25f, 0.5f, 0.75f);
+        for (int i = 0; i < 4; i++)
+            data.weights[i] = (i + 1) * 0.1875f;
+        data.after = 0.0625f;
+        data.offsets[0] = new float2(0.125f, 0.25f);
+        data.offsets[1] = new float2(0.375f, 0.5f);
+        data.offsets[2] = new float2(0.625f, 0.75f);
+        data.counts[0] = 4;
+        data.counts[1] = 1;
+        data.tail = new float2(0.25f, 0.125f);
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        int cell = (int)(uv.x * 4.0f);
+        int pair = (int)(uv.y * 3.0f);
+        float r = data.weights[cell] + data.after;
+        float2 o = data.offsets[pair];
+        float g = o.y * 0.5f + data.weights[1] * o.x;
+        float b = data.direction.z * data.weight + (float)data.counts[1] / (float)data.counts[0] * 0.5f + data.tail.y;
+        return new float4(r, g, b, 1.0f);
+    }
+}
+
 /// <summary>Local functions: static ones, ones that capture locals and parameters, and nested ones.</summary>
 public static class LocalFunctions
 {

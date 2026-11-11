@@ -758,7 +758,7 @@ namespace helix::shadercompiler
                     {
                         if (g.type.base != BaseType::Struct)
                             return Fail(Format("uniform {} must be a struct", g.name));
-                        if (!CheckUniformLayout(m, g.type, g.name, 0, 0, error))
+                        if (!CheckUniformLayout(m, g.type, g.name, error))
                             return false;
                         FormatAppend(out, "layout(std140) uniform hx_block_{}\n{{\n    {} g_{};\n}};\n", g.name, TypeName(g.type), g.name);
                         shader.bindings.Push({Format("hx_block_{}", g.name), GlobalKind::Uniform, g.slot});

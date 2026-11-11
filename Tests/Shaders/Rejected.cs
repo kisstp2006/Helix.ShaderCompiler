@@ -6,23 +6,11 @@ namespace Helix.ShaderTests;
 /// <summary>Shaders the compiler must refuse with a clear message.</summary>
 public static class Rejected
 {
-    public struct Misaligned
-    {
-        public float weight;
-        public float3 direction;
-    }
-
-    [Uniform(0)] public static Misaligned settings;
-
     private static int Depth(int n) => n <= 0 ? 0 : Depth(n - 1) + 1;
 
     [FragmentShader]
     [return: Target(0)]
     public static float4 Recursive([Location(0)] float2 uv) => new float4(Depth(3) * uv.x);
-
-    [FragmentShader]
-    [return: Target(0)]
-    public static float4 Layout([Location(0)] float2 uv) => new float4(settings.direction * settings.weight, uv.x);
 
     [Storage(0)] public static RWStructuredBuffer<float3> points;
     [Storage(1)] public static StructuredBuffer<uint> fixedValues;
@@ -58,23 +46,6 @@ public static class Rejected
     [FragmentShader]
     [return: Target(0)]
     public static float4 HalfUniform() => (float4)halfBlock.tint;
-
-    [System.Runtime.CompilerServices.InlineArray(3)]
-    public struct Scalars
-    {
-        private float element;
-    }
-
-    public struct ScalarBlock
-    {
-        public Scalars values;
-    }
-
-    [Uniform(6)] public static ScalarBlock scalarBlock;
-
-    [FragmentShader]
-    [return: Target(0)]
-    public static float4 ScalarArray() => new float4(scalarBlock.values[1]);
 
     public unsafe struct FixedWeights
     {

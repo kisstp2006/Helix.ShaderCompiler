@@ -78,6 +78,19 @@ HX_TEST(Reflection, DescribesBlocksResourcesAndStageValues)
     HX_CHECK(pass.blocks.Size() == 1u && pass.resources.Size() == 1u && pass.vertexInputs.Size() == 2u && pass.targets.Size() == 1u &&
              pass.keywords.Size() == 1u);
 
+    // Where C# packs otherwise: the float3 after a float starts a new row, array elements take 16 bytes each.
+    {
+        ShaderReflection layouts;
+        HX_REQUIRE(ReflectMethod(a, a.FindType("Helix.ShaderTests.Cases", "UniformLayouts"), "Fragment", Stage::Fragment, layouts, error));
+        HX_REQUIRE(layouts.blocks.Size() == 1);
+        const ReflectedBlock& p = layouts.blocks[0];
+        const Type f1 = Type::Scalar(BaseType::Float), f2 = Type::Vector(BaseType::Float, 2), f3 = Type::Vector(BaseType::Float, 3);
+        const Type i1 = Type::Scalar(BaseType::Int);
+        HX_CHECK(Member(p, "weight", f1, 0, 4) && Member(p, "direction", f3, 16, 12) && Member(p, "weights[0]", f1, 32, 4) &&
+                 Member(p, "weights[3]", f1, 80, 4) && Member(p, "after", f1, 96, 4) && Member(p, "offsets[0]", f2, 112, 8) &&
+                 Member(p, "offsets[2]", f2, 144, 8) && Member(p, "counts[0]", i1, 160, 4) && Member(p, "counts[1]", i1, 176, 4) &&
+                 Member(p, "tail", f2, 192, 8) && p.size == 208);
+    }
     // Offsets follow std140; a three component vector takes 12 bytes and the float after it fills the row.
     ShaderReflection uniforms;
     HX_REQUIRE(ReflectMethod(a, a.FindType("Helix.ShaderTests.Cases", "Uniforms"), "Fragment", Stage::Fragment, uniforms, error));
@@ -166,6 +179,6 @@ HX_TEST(Reflection, RejectsStagesThatDoNotFit)
     // A layout the GPU cannot take is reported by the reflection as well.
     ShaderReflection bad;
     Module module;
-    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(a.FindType("Helix.ShaderTests", "Rejected"), "Layout"), Stage::Fragment, module, error));
-    HX_CHECK(!Reflect(module, bad, error) && StringView(error).Contains("settings.direction"));
+    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(a.FindType("Helix.ShaderTests", "Rejected"), "HalfUniform"), Stage::Fragment, module, error));
+    HX_CHECK(!Reflect(module, bad, error) && StringView(error).Contains("halfBlock.tint"));
 }

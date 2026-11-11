@@ -5,8 +5,8 @@
 
 namespace helix::shadercompiler
 {
-    // Uniform structs are copied to the GPU as the C# struct lies in memory. That works when every field sits where the
-    // GPU layout rules (std140, which also satisfies the D3D constant buffer rules) put it; these helpers check it.
+    // GPU layouts: std140 for uniform blocks (which also satisfies the D3D constant buffer rules), std430 for buffer
+    // elements, and the sequential layout of the C# structs.
     struct UniformLayout
     {
         u32 align, size;
@@ -132,55 +132,75 @@ namespace helix::shadercompiler
         return true;
     }
 
-    inline bool CheckUniformLayout(const Module& m, Type t, StringView path, u32 std140, u32 sequential, String& error)
+    // Uniform blocks are laid out by std140 (every array element on 16 bytes); the C# struct does not have to match,
+    // since materials and the renderer write members at the reflected offsets. Refused: what has no fixed GPU layout.
+    inline bool CheckUniformLayout(const Module& m, Type t, StringView path, String& error, u32 depth = 0)
     {
+        if (depth > 64)
+        {
+            error = Format("uniform {} nests too deep", path);
+            return false;
+        }
         for (const StructField& f : m.structs[t.structIndex].fields)
         {
             String name = Format("{}.{}", path, f.name);
-            if (f.type.base == BaseType::Bool)
+            Type type = f.type;
+            // Arrays: the checks of their elements.
+            while (type.base == BaseType::Array)
+            {
+                type = m.arrays[type.structIndex].element;
+                name = Format("{}[0]", name);
+            }
+            if (type.base == BaseType::Bool)
             {
                 error = Format("uniform field {} is a bool; use an int or uint, bools have no fixed layout", name);
                 return false;
             }
-            if (f.type.half)
+            if (type.half)
             {
                 error = Format("uniform field {} is half; uniform blocks take float, since the GPU layout has no 16 bit floats", name);
                 return false;
             }
-            UniformLayout l = Std140(m, f.type);
-            std140 = u32(AlignUp(std140, l.align));
-            if (f.type.IsMatrix() && f.type.cols != 4)
+            if (type.IsMatrix() && (type.cols != 4 || type.rows != 4))
             {
-                error = Format("uniform field {} is a {}x{} matrix, which the GPU stores with padded columns; use float4x4", name, u32(f.type.cols),
-                               u32(f.type.cols));
+                error = Format("uniform field {} is a {}x{} matrix, which the GPU stores with padded columns; use float4x4", name, u32(type.rows),
+                               u32(type.cols));
                 return false;
             }
-            if (std140 != sequential)
-            {
-                error = Format("uniform field {} is at byte {} in C# but at byte {} on the GPU; reorder the fields or add padding before it", name,
-                               sequential, std140);
+            if (type.base == BaseType::Struct && !CheckUniformLayout(m, type, name, error, depth + 1))
                 return false;
-            }
-            if (f.type.base == BaseType::Struct && !CheckUniformLayout(m, f.type, name, std140, sequential, error))
-                return false;
-            if (f.type.base == BaseType::Array)
-            {
-                // Elements lie 16 bytes apart on the GPU and back to back in C#.
-                const ArrayType& a = m.arrays[f.type.structIndex];
-                u32 stride = u32(AlignUp(Std140(m, a.element).size, 16)), size = SequentialSize(m, a.element);
-                if (stride != size)
-                {
-                    error = Format("uniform array {} has elements of {} bytes in C# but {} on the GPU; use float4 or matrix elements, or pad the element to a "
-                                   "multiple of 16 bytes",
-                                   name, size, stride);
-                    return false;
-                }
-                if (a.element.base == BaseType::Struct && !CheckUniformLayout(m, a.element, Format("{}[0]", name), std140, sequential, error))
-                    return false;
-            }
-            std140 += l.size;
-            sequential += SequentialSize(m, f.type);
         }
         return true;
+    }
+
+    // Byte offsets of the numeric leaves of a uniform value (scalars, vectors, matrix columns) in std140, in the order
+    // of the type's fields and elements.
+    inline void Std140Leaves(const Module& m, Type t, u32 base, Array<u32>& out)
+    {
+        if (t.base == BaseType::Array)
+        {
+            const ArrayType& a = m.arrays[t.structIndex];
+            u32 stride = u32(AlignUp(Std140(m, a.element).size, 16));
+            for (u32 i = 0; i < a.length; i++)
+                Std140Leaves(m, a.element, base + i * stride, out);
+        }
+        else if (t.base == BaseType::Struct)
+        {
+            u32 offset = base;
+            for (const StructField& f : m.structs[t.structIndex].fields)
+            {
+                UniformLayout l = Std140(m, f.type);
+                offset = u32(AlignUp(offset, l.align));
+                Std140Leaves(m, f.type, offset, out);
+                offset += l.size;
+            }
+        }
+        else if (t.IsMatrix())
+        {
+            for (u32 c = 0; c < t.cols; c++)
+                out.Push(base + 16 * c);
+        }
+        else if (t.IsNumeric())
+            out.Push(base);
     }
 }

@@ -153,7 +153,8 @@ const ReflectedMember* tint = pass.blocks[0].Find("tint");   // type, byte offse
 ```
 
 `Reflect` describes one translated module, so one variant: its uniform blocks (slot, size, every member with type, byte
-offset and size; members of nested structs as `light.color`), its textures, storage buffers and storage textures (slot,
+offset and size in std140, array elements 16 bytes apart; members of nested structs as `light.color`, elements as
+`weights[2]`), its textures, storage buffers and storage textures (slot,
 writable, element type and size, format), the values entering and leaving the stage (vertex attributes are the
 `Location` inputs of the vertex stage), the keywords it read and the work group size of a compute shader. Resources the
 variant does not use are not listed. A texture is sampled with the sampler bound at its slot, so samplers are not listed.
@@ -299,7 +300,8 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
    multiplication); other static methods are translated the same way and become functions, generic ones once per type.
 3. The branches of the IL form a control flow graph. Short circuit conditions are merged back into `&&` and `||`, loops are
    found from back edges, and the graph is written as `if`, `while`, `break`, `continue` and `return`.
-4. The backend prints the module as GLSL and checks that every uniform struct has the same layout in C# and in std140.
+4. The backend prints the module as GLSL; uniform blocks are laid out by std140 (every array element on 16 bytes), whatever
+   the C# struct looks like, so their members are written at the reflected offsets, not copied from the C# struct.
    The Direct3D backend writes instructions for a register machine instead: every variable gets registers, expressions
    are evaluated into temporaries, calls are copied into the caller (a `return` becomes a `break` out of a loop that runs
    once), and the result is wrapped in a container with its signatures and checksum.
@@ -459,7 +461,8 @@ cannot be indexed.
   check that the code, the helper function and the texture of other variants are gone.
 - Definitions: a shader using every declarative feature is read back field by field, a pass of it is compiled with
   keyword values taken from the description, and three broken definitions give their messages.
-- Rejected shaders: recursion, a uniform struct whose layout differs between C# and std140, a missing stage attribute.
+- Rejected shaders: recursion, uniform members without a fixed GPU layout (bool, half, matrices other than 4x4), a missing
+  stage attribute.
 
 `HELIX_PRINT_SHADERS=<case name>` prints the generated fragment shader of one execution case and writes its bytecode to
 `<case name>.dxbc` in the working directory.
