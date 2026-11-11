@@ -339,6 +339,29 @@ namespace helix::shadercompiler
                 return t.IsMatrix() ? t.cols : t.IsNumeric() ? 1u : 0u;
             }
 
+            // RegisterCount without overflow: types larger than a shader can hold count as kTooManyRegisters.
+            static constexpr u64 kTooManyRegisters = u64(1) << 32;
+            static constexpr u64 kMaxRegisters = 4096;
+            u64 CheckedRegisterCount(Type t, u32 depth = 0) const
+            {
+                if (depth > 64)
+                    return kTooManyRegisters;
+                if (t.base == BaseType::Array)
+                {
+                    u64 item = CheckedRegisterCount(m.arrays[t.structIndex].element, depth + 1);
+                    u64 n = item * m.arrays[t.structIndex].length;
+                    return item >= kTooManyRegisters || n >= kTooManyRegisters ? kTooManyRegisters : n;
+                }
+                if (t.base == BaseType::Struct)
+                {
+                    u64 n = 0;
+                    for (const StructField& f : m.structs[t.structIndex].fields)
+                        n = Min(n + CheckedRegisterCount(f.type, depth + 1), kTooManyRegisters);
+                    return n;
+                }
+                return RegisterCount(t);
+            }
+
             // The scalar and vector pieces a type is stored as, one register each; matrices by column.
             void Leaves(Type t, Array<Type>& out) const
             {
@@ -1974,6 +1997,16 @@ namespace helix::shadercompiler
 
             bool Run(DxbcShader& shader)
             {
+                // A shader model 4 / 5 shader has 4096 temporary registers and constant buffers of 4096 registers, so no
+                // value can be larger; checked first, as larger arrays would take very long to lay out.
+                for (u32 i = 0; i < m.arrays.Size(); i++)
+                    if (u64 n = CheckedRegisterCount(Type::ArrayOf(i)); n > kMaxRegisters)
+                        return Fail(n >= kTooManyRegisters ? String("an array too large for a D3D11 shader")
+                                                           : Format("an array of {} registers, more than the {} of a D3D11 shader", n, kMaxRegisters));
+                for (u32 i = 0; i < m.structs.Size(); i++)
+                    if (u64 n = CheckedRegisterCount(Type::Struct(i)); n > kMaxRegisters)
+                        return Fail(n >= kTooManyRegisters ? Format("struct {} is too large for a D3D11 shader", m.structs[i].name)
+                                                           : Format("struct {} of {} registers, more than the {} of a D3D11 shader", m.structs[i].name, n, kMaxRegisters));
                 for (const Global& g : m.globals)
                 {
                     if (g.kind == GlobalKind::Uniform && (g.type.base != BaseType::Struct || !CheckUniformLayout(m, g.type, g.name, 0, 0, error)))
