@@ -191,6 +191,8 @@ HX_TEST(Definition, TakesPassesWithUsePass)
              depth.state.colorMask == 0 && depth.assembly == &a);
     HX_CHECK(shadow.name == "ShadowCaster" && shadow.lightMode == "ShadowCaster" && shadow.assembly == &includes && shadow.subShader == 0);
     HX_CHECK(borrowing.passes[2].name == "Main" && borrowing.passes[2].assembly == &a);
+    // Each shader knows the assembly that defines it.
+    HX_CHECK(borrowing.assembly == &a && glass.assembly == &a);
 
     // The code of a borrowed pass is translated in its own assembly; its keywords make the variants.
     VariantSet set;

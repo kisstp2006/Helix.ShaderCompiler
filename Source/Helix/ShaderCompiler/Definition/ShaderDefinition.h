@@ -139,6 +139,8 @@ namespace helix::shadercompiler
         // In the order the pass classes are written, SubShader after SubShader.
         Array<ShaderPass> passes;
         u32 type = 0;
+        // The assembly that defines the shader (ReadShaderDefinitions also lists the shaders of the references).
+        const Assembly* assembly = nullptr;
 
         // The first pass of that name: in the first SubShader that has one.
         const ShaderPass* FindPass(StringView passName) const;

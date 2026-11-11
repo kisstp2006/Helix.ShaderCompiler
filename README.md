@@ -80,7 +80,7 @@ const ShaderPass* pass = shaders[0].FindPass("Forward");
 TranslateEntryPoint(assembly, pass->fragment, Stage::Fragment, module, error, options);
 ```
 
-A `ShaderDescription` holds the name, fallback, tags and LOD of the shader, its material properties (type, display name,
+A `ShaderDescription` holds the name, fallback, tags and LOD of the shader, the assembly that defines it, its material properties (type, display name,
 range, default value or default texture, flags such as main texture or HDR, the keyword a toggle drives), its keywords
 (scope, shader feature, dynamic, the members of an enum keyword with their values), its SubShaders (LOD, tags) and its
 passes in source order with their SubShader, render state and entry point methods. A pass takes the render state,

@@ -437,6 +437,7 @@ namespace helix::shadercompiler
             {
                 TypeDefInfo type = a.TypeDef(typeRow);
                 shader.type = typeRow;
+                shader.assembly = &a;
                 shader.name = attribute.fixed.Empty() ? type.name : attribute.fixed[0].text;
                 shader.fallback = attribute.Text("Fallback");
                 shader.customEditor = attribute.Text("CustomEditor");
