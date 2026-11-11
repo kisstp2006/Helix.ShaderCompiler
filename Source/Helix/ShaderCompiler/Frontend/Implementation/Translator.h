@@ -384,7 +384,8 @@ namespace helix::shadercompiler::frontend
         i32 FunctionIn(u32 assembly, u32 methodRow, const Array<Type>& typeArgs, StringView caller, const Array<Binding>& bindings);
 
         // The TypeDef a TypeDef or TypeRef token of the current assembly stands for, in whichever assembly defines it.
-        bool ResolveType(Token type, u32& assembly, u32& typeRow) const;
+        // `depth` counts the enclosing types of a nested type reference; a damaged assembly can make the chain a loop.
+        bool ResolveType(Token type, u32& assembly, u32& typeRow, u32 depth = 0) const;
 
         static bool SameType(const Assembly& x, const TypeSig& s, const Assembly& y, const TypeSig& t);
 

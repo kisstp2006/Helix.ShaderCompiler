@@ -45,7 +45,7 @@ namespace helix::shadercompiler::frontend
         return index;
     }
 
-    bool Translator::ResolveType(Token type, u32& assembly, u32& typeRow) const
+    bool Translator::ResolveType(Token type, u32& assembly, u32& typeRow, u32 depth) const
     {
         if (type.Is(Table::TypeDef))
         {
@@ -61,8 +61,9 @@ namespace helix::shadercompiler::frontend
         Token scope = a->CodedCell(Table::TypeRef, type.Row(), 0);
         if (scope.Is(Table::TypeRef))
         {
+            // Types nest far less deep than this.
             u32 outer = 0;
-            if (!ResolveType(scope, assembly, outer))
+            if (depth >= 32 || !ResolveType(scope, assembly, outer, depth + 1))
                 return false;
             typeRow = assemblies[assembly]->FindNestedType(outer, name);
             return typeRow != 0;
