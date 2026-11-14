@@ -176,6 +176,11 @@ namespace helix::shadercompiler
                 Type first = e.args.Empty() ? kVoid : fn->exprs[e.args[0]].type;
                 switch (e.intrinsic)
                 {
+                case Intrinsic::InstanceId:
+                    if (m.stage != Stage::Vertex)
+                        return Fail("ShaderMath.InstanceId is read in vertex shaders only");
+                    out.Append("uint(gl_InstanceID)");
+                    return true;
                 case Intrinsic::Round: return call("roundEven");
                 case Intrinsic::Frac: return call("fract");
                 case Intrinsic::Rsqrt: return call("inversesqrt");

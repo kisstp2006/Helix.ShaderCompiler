@@ -1017,6 +1017,23 @@ namespace helix::shadercompiler
 
                 switch (e.intrinsic)
                 {
+                case Intrinsic::InstanceId:
+                {
+                    if (m.stage != Stage::Vertex)
+                        return Fail("ShaderMath.InstanceId is read in vertex shaders only");
+                    if (instanceIdRegister < 0)
+                    {
+                        instanceIdRegister = i32(freeSystemRegister++);
+                        inputs.Push({"SV_InstanceID", 0, 8u, 1, u32(instanceIdRegister), 1});
+                        Declare({kDclInputSgv, 0x00101012u, u32(instanceIdRegister), 8u});
+                    }
+                    Src s;
+                    s.kind = Src::Input;
+                    s.reg = u32(instanceIdRegister);
+                    s.count = 1;
+                    s.isFloat = false;
+                    return result(Emit(kMov, 1, s, false));
+                }
                 case Intrinsic::Abs: return result(intType ? Emit(kImax, n, arg(0), Neg(arg(0)), false) : Emit(kMov, n, Abs(arg(0))));
                 case Intrinsic::Sign:
                 {
@@ -1835,6 +1852,9 @@ namespace helix::shadercompiler
             // ---------------------------------------------------------------- stage interface and container
 
             Array<SignatureElement> inputs, outputs;
+            // The vertex stage's instance id input register (-1: not declared), and the next free system register.
+            i32 instanceIdRegister = -1;
+            u32 freeSystemRegister = 0;
             Array<u32> declarations;
 
             void Declare(std::initializer_list<u32> words)
@@ -1896,6 +1916,8 @@ namespace helix::shadercompiler
                     s.reg = nextSystemRegister++;
                     inputs.Push({vertexId ? "SV_VertexID" : "SV_InstanceID", 0, vertexId ? 6u : 8u, 1, s.reg, 1});
                     Declare({kDclInputSgv, 0x00101012u, s.reg, vertexId ? 6u : 8u});
+                    if (!vertexId)
+                        instanceIdRegister = i32(s.reg);
                 }
                 else
                     return Fail(Format("{} has a stage attribute the Direct3D backend does not support here", what));
@@ -2069,6 +2091,7 @@ namespace helix::shadercompiler
                     else if (!Input(p.semantic, p.semanticIndex, p.type, p.flat, places[0], systemRegister, Format("parameter {}", p.name)))
                         return false;
                 }
+                freeSystemRegister = systemRegister;
                 // The fragment signature lists the position the vertex stage always writes, read or not.
                 bool position = false;
                 for (const SignatureElement& e : inputs)

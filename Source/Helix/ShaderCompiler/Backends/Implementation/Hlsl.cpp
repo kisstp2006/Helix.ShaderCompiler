@@ -158,6 +158,10 @@ namespace helix::shadercompiler
             {
                 switch (e.intrinsic)
                 {
+                case Intrinsic::InstanceId:
+                    // The vertex stage's SV_InstanceID input (the bytecode declares it where it is read).
+                    out.Append("hx_InstanceID");
+                    return;
                 case Intrinsic::Select:
                     out.Append('(');
                     Value(e.args[0]);

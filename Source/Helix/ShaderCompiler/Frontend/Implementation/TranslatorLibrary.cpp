@@ -169,7 +169,7 @@ namespace helix::shadercompiler::frontend
 
     bool Translator::LibraryCall(Method& mt, StringView typeName, StringView member, const MethodSig& sig, Array<Item>& args, bool isNew, bool& unknown)
     {
-        if (args.Size() < sig.params.Size() + (sig.hasThis && !isNew ? 1u : 0u) || (args.Empty() && member != "Discard" && !isNew))
+        if (args.Size() < sig.params.Size() + (sig.hasThis && !isNew ? 1u : 0u) || (args.Empty() && member != "Discard" && member != "InstanceId" && !isNew))
             return Fail(mt.name, Format("{}.{} without its arguments", typeName, member));
         Type result = kVoid, self;
         bool byRef = false;

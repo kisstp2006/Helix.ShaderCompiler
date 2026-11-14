@@ -116,7 +116,7 @@ namespace helix::shadercompiler
     X(TextureSampleCmpLevelZero, "texture.samplecmplevelzero") X(BufferLength, "buffer.length") X(InterlockedAdd, "interlockedadd") X(ImageSize, "image.size")                         \
     X(BindlessSample, "bindless.sample") X(BindlessSampleLevel, "bindless.samplelevel") X(BindlessLoad, "bindless.load")       \
     X(BindlessStore, "bindless.store") X(BindlessSize, "bindless.size") X(AsFloat, "asfloat") X(AsUInt, "asuint")            \
-    X(AsInt, "asint")
+    X(AsInt, "asint") X(InstanceId, "instanceid")
 
     enum class Intrinsic : u8
     {

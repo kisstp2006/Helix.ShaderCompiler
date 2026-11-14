@@ -17,6 +17,8 @@ namespace helix::shadercompiler
     {
         switch (intrinsic)
         {
+        case Intrinsic::InstanceId:
+            return 0;
         case Intrinsic::Atan2: case Intrinsic::Pow: case Intrinsic::Min: case Intrinsic::Max: case Intrinsic::Step: case Intrinsic::Fmod:
         case Intrinsic::Dot: case Intrinsic::Cross: case Intrinsic::Distance: case Intrinsic::Reflect: case Intrinsic::Mul:
         case Intrinsic::TextureSample: case Intrinsic::BindlessSample: case Intrinsic::BindlessLoad:

@@ -125,6 +125,57 @@ public static class Depth
     public static float4 Fragment() => draw.color;
 }
 
+/// <summary>Integer color into a UINT target (logical operations on Direct3D 11 need one).</summary>
+public static class UintColor
+{
+    public struct Draw
+    {
+        public uint4 value;
+    }
+
+    [Uniform(0)] public static Draw draw;
+
+    [VertexShader]
+    [return: Position]
+    public static float4 Vertex([Location(0)] float2 p) => new float4(p, 0.5f, 1.0f);
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static uint4 Fragment() => draw.value;
+}
+
+/// <summary>Instances in a row: each instance moves its quad one step right by ShaderMath.InstanceId and takes its color.</summary>
+public static class InstanceRow
+{
+    public struct Draw
+    {
+        public float4 color0;
+        public float4 color1;
+        public float4 color2;
+        public float4 color3;
+    }
+
+    [Uniform(0)] public static Draw draw;
+
+    public struct Varyings
+    {
+        [Position] public float4 position;
+        [Location(0)] public float4 color;
+    }
+
+    [VertexShader]
+    public static Varyings Vertex([Location(0)] float2 p)
+    {
+        uint i = ShaderMath.InstanceId();
+        float4 c = i == 0 ? draw.color0 : i == 1 ? draw.color1 : i == 2 ? draw.color2 : draw.color3;
+        return new Varyings { position = new float4(p.x + i * 0.5f, p.y, 0.5f, 1.0f), color = c };
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float4 color) => color;
+}
+
 /// <summary>Small shapes placed by the uniform block.</summary>
 public static class Placed
 {

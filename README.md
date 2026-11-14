@@ -331,6 +331,8 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
   texels (`Sample` and `SampleLevel` for float texels, `Load` except on cubes, `Size`), `SampleCmp` and `SampleCmpLevelZero` of 2D,
   array and cube shadow maps with a `SamplerComparisonState`, and uniform structs, textures and samplers
   declared as static fields.
+- `ShaderMath.InstanceId()` in vertex shaders and the functions they call: `gl_InstanceID` in GLSL, an `SV_InstanceID`
+  input the bytecode declares where it is first read (or the one an `[InstanceId]` parameter declared).
 - Methods of the shader library without an intrinsic (`float4x4.Translation`, `float4x4.Scale`, ...), compiled from
   their C# bodies when `TranslateOptions::references` holds the HelixEngine.Shaders assembly.
 - Code of other assemblies, the way shaders use include files: their structs, enums, functions (also taking delegates
