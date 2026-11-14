@@ -44,7 +44,9 @@ String error;
 if (!TranslateEntryPoint(assembly, assembly.FindMethod(type, "Fragment"), Stage::Fragment, module, error) ||
     !EmitGlsl(module, GlslTarget::Glsl330, shader, error))
     Report(error);
-// shader.source is the GLSL text, shader.bindings maps the names in it to the slots given in C#.
+// shader.source is the GLSL text, shader.bindings maps the names in it to the slots given in C#. Names are the
+// C# names with a prefix and only letters, digits and single underscores (GLSL reserves double ones): _MainTex is
+// g_MainTex.
 
 DxbcShader code;
 EmitDxbc(module, code, error);

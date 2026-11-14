@@ -190,6 +190,12 @@ HX_TEST(Glsl, EmitsComputeShadersWithStorageBuffers)
                EmitGlsl(module, GlslTarget::Glsl330, desktop, error));
     HX_CHECK(StringView(desktop.source).Contains("S_Helix_ShaderTests_Cases_Uniforms_Params g_data;"));
 
+    // A global named with a leading underscore keeps one underscore after its prefix.
+    u32 textures = a.FindType("Helix.ShaderTests.Cases", "Textures");
+    HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(textures, "Fragment"), Stage::Fragment, module, error) &&
+               EmitGlsl(module, GlslTarget::Glsl330, desktop, error));
+    HX_CHECK(StringView(desktop.source).Contains("sampler2D g_smooth;") && !StringView(desktop.source).Contains("__"));
+
     // Inline arrays become GLSL arrays in locals, structs and uniform blocks.
     u32 arrays = a.FindType("Helix.ShaderTests.Cases", "InlineArrays");
     HX_REQUIRE(TranslateEntryPoint(a, a.FindMethod(arrays, "Fragment"), Stage::Fragment, module, error) &&

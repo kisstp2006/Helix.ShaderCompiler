@@ -448,7 +448,7 @@ namespace helix::shadercompiler
                 case ExprKind::ConstBool: out.Append(e.integer ? "true" : "false"); break;
                 case ExprKind::Local: out.Append(fn->locals[e.index].name); break;
                 case ExprKind::Param: FormatAppend(out, "p_{}", Ident(fn->params[e.index].name)); break;
-                case ExprKind::Global: FormatAppend(out, "g_{}", m.globals[e.index].name); break;
+                case ExprKind::Global: FormatAppend(out, "g_{}", Ident(m.globals[e.index].name)); break;
                 case ExprKind::Field:
                     Value(e.a);
                     FormatAppend(out, ".m_{}", Ident(m.structs[fn->exprs[e.a].type.structIndex].fields[e.index].name));
@@ -775,8 +775,8 @@ namespace helix::shadercompiler
                             return Fail(Format("uniform {} must be a struct", g.name));
                         if (!CheckUniformLayout(m, g.type, g.name, error))
                             return false;
-                        FormatAppend(out, "layout(std140) uniform hx_block_{}\n{{\n    {} g_{};\n}};\n", g.name, TypeName(g.type), g.name);
-                        shader.bindings.Push({Format("hx_block_{}", g.name), GlobalKind::Uniform, g.slot});
+                        FormatAppend(out, "layout(std140) uniform hx_block_{}\n{{\n    {} g_{};\n}};\n", Ident(g.name), TypeName(g.type), Ident(g.name));
+                        shader.bindings.Push({Format("hx_block_{}", Ident(g.name)), GlobalKind::Uniform, g.slot});
                     }
                     else if (g.kind == GlobalKind::Storage)
                     {
@@ -787,13 +787,13 @@ namespace helix::shadercompiler
                             static constexpr const char* kFormats[] = {"rgba8", "rgba8", "rgba16f", "rgba32f", "r32f", "r32ui", "r32i"};
                             const char* prefix = g.element.base == BaseType::UInt ? "u" : g.element.base == BaseType::Int ? "i" : "";
                             FormatAppend(out, "layout({}, binding = {}) {}uniform highp {}image2D g_{};\n", kFormats[u32(g.format) % 7], g.slot,
-                                         g.readable ? "" : "writeonly ", prefix, g.name);
+                                         g.readable ? "" : "writeonly ", prefix, Ident(g.name));
                             continue;
                         }
                         if (!CheckBufferLayout(m, g.element, g.name, error))
                             return false;
                         FormatAppend(out, "layout(std430, binding = {}) {}buffer hx_buffer_{}\n{{\n    {} g_{}[];\n}};\n", g.slot,
-                                     g.writable ? "" : "readonly ", g.name, TypeName(g.element), g.name);
+                                     g.writable ? "" : "readonly ", Ident(g.name), TypeName(g.element), Ident(g.name));
                     }
                     else if (g.kind == GlobalKind::Texture)
                     {
@@ -805,8 +805,8 @@ namespace helix::shadercompiler
                                                                                   : "2D";
                         bool es = IsEssl(target);
                         bool defaulted = !g.comparison && g.element.base == BaseType::Float && (g.type.base == BaseType::Texture2D || g.type.base == BaseType::TextureCube);
-                        FormatAppend(out, "uniform {}{}sampler{}{} g_{};\n", es && !defaulted ? "highp " : "", prefix, shape, g.comparison ? "Shadow" : "", g.name);
-                        shader.bindings.Push({Format("g_{}", g.name), GlobalKind::Texture, g.slot});
+                        FormatAppend(out, "uniform {}{}sampler{}{} g_{};\n", es && !defaulted ? "highp " : "", prefix, shape, g.comparison ? "Shadow" : "", Ident(g.name));
+                        shader.bindings.Push({Format("g_{}", Ident(g.name)), GlobalKind::Texture, g.slot});
                     }
                 }
                 // The tables of the RHI: texture handles at binding 7, buffer (offset, size) pairs at 8, the heap at 9.

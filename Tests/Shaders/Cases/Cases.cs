@@ -366,8 +366,9 @@ public static class Textures
 {
     [Texture(0)] public static Texture2D<float4> image;
     [Sampler(0)] public static SamplerState imageSampler;
-    [Texture(1)] public static Texture2D<float4> smooth;
-    [Sampler(1)] public static SamplerState smoothSampler;
+    // Names with a leading underscore, as the reference's _MainTex: GLSL reserves names with two underscores in a row.
+    [Texture(1)] public static Texture2D<float4> _smooth;
+    [Sampler(1)] public static SamplerState _smoothSampler;
 
     public static void Setup()
     {
@@ -378,8 +379,8 @@ public static class Textures
                 pixels[y * 4 + x] = new float4(x * 85 / 255.0f, y * 85 / 255.0f, (x ^ y) & 1, 1.0f);
         image = Texture2D<float4>.FromTexels(pixels, 4, 4);
         imageSampler = new SamplerState { Filter = SamplerFilter.Nearest, Address = SamplerAddress.Repeat };
-        smooth = Texture2D<float4>.FromTexels(new float4[] { new(1, 0, 0, 1), new(0, 1, 0, 1), new(0, 0, 1, 1), new(1, 1, 1, 1) }, 2, 2);
-        smoothSampler = new SamplerState { Filter = SamplerFilter.Linear, Address = SamplerAddress.Clamp };
+        _smooth = Texture2D<float4>.FromTexels(new float4[] { new(1, 0, 0, 1), new(0, 1, 0, 1), new(0, 0, 1, 1), new(1, 1, 1, 1) }, 2, 2);
+        _smoothSampler = new SamplerState { Filter = SamplerFilter.Linear, Address = SamplerAddress.Clamp };
     }
 
     [FragmentShader]
@@ -387,7 +388,7 @@ public static class Textures
     public static float4 Fragment([Location(0)] float2 uv)
     {
         float4 a = image.Sample(imageSampler, uv * 2.0f);
-        float4 b = smooth.Sample(smoothSampler, uv);
+        float4 b = _smooth.Sample(_smoothSampler, uv);
         float4 c = image.Load(new int2(1, 2), 0);
         int2 size = image.Size;
         return new float4(a.xy * 0.5f + b.xy * 0.5f, b.z * 0.5f + c.x * 0.5f, size.x / 8.0f + a.z * 0.25f);
