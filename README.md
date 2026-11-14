@@ -189,6 +189,9 @@ unless the property is marked `[NoScaleOffset]`. `BindProperties` lists for ever
 offset, or texture slot), builds the default data of each block that takes properties (zero, the `[Default]` values
 converted to the member type, tiling one and zero) and tells which blocks also hold members the renderer has to fill and
 which properties the pass does not use. A property whose member or texture has another type is an error naming both.
+With `NamedValues` (the engine's way, as the reference's globals and property blocks work) every uniform block outside its
+reserved slots (the renderer's own blocks) is a material block too, its members without a property filled by name, and
+the textures without a property are listed as named texture slots.
 
 ## Bindless resources
 

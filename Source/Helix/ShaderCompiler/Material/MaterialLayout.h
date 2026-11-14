@@ -42,10 +42,19 @@ namespace helix::shadercompiler
         bool propertiesOnly = true;
     };
 
+    // A texture of a pass that no property names: bound by its name (values by name, see NamedValues).
+    struct NamedTexture
+    {
+        String name;
+        u32 slot = 0;
+    };
+
     struct MaterialLayout
     {
         Array<PropertyBinding> bindings;
         Array<MaterialBlock> blocks;
+        // With NamedValues: the textures without a property.
+        Array<NamedTexture> namedTextures;
         // Properties this pass (in this variant) does not use, as indices into ShaderDescription::properties.
         Array<u32> unused;
 
@@ -53,9 +62,17 @@ namespace helix::shadercompiler
         const PropertyBinding* Find(u32 property, PropertyTarget target) const;
     };
 
+    // Values by name (the reference's globals and property blocks): every uniform block of the pass outside the
+    // reserved slots (the renderer's own blocks) is a material block, its members without a property filled by name, and
+    // the textures without a property are named texture slots.
+    struct NamedValues
+    {
+        Span<const u32> reservedSlots;
+    };
+
     // Ties the properties of a shader to what one pass exposes. Fails when a property and the member or texture of its
-    // name have different types, naming both.
-    bool BindProperties(const ShaderDescription& shader, const PassReflection& pass, MaterialLayout& out, String& error);
+    // name have different types, naming both. Without named values only the blocks that take a property are material blocks.
+    bool BindProperties(const ShaderDescription& shader, const PassReflection& pass, MaterialLayout& out, String& error, const NamedValues* named = nullptr);
 
     // Writes a property value into block data laid out like MaterialBlock::defaults: up to 16 numbers, converted to
     // the type of the member (float, int, uint; a bool member takes 0 or 1 as a 32 bit integer).

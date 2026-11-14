@@ -122,3 +122,32 @@ HX_TEST(Material, ReportsMixedBlocksUnusedPropertiesAndWrongTypes)
     std::printf("    %s\n", error.CStr());
     HX_CHECK(StringView(error).Contains("tint") && StringView(error).Contains("float2") && StringView(error).Contains("float4"));
 }
+
+HX_TEST(Material, NamedValuesMakeMaterialBlocksOfTheRestAndNameTheTextures)
+{
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    ShaderDescription shader;
+    PassReflection pass;
+    MaterialLayout layout;
+    String error;
+    // Painted's frame block (slot 0) takes no property: a material block filled by name, unless its slot is reserved.
+    HX_REQUIRE(Prepare(a, "Painted", "Forward", shader, pass, error));
+    NamedValues named;
+    HX_REQUIRE(BindProperties(shader, pass, layout, error, &named));
+    HX_REQUIRE(layout.blocks.Size() == 2u);
+    bool frame = false;
+    for (const MaterialBlock& b : layout.blocks)
+        frame = frame || (b.name == "frame" && b.slot == 0 && !b.propertiesOnly);
+    HX_CHECK(frame && layout.namedTextures.Empty());
+    const u32 reserved[] = {0};
+    named.reservedSlots = Span<const u32>(reserved, 1);
+    HX_REQUIRE(BindProperties(shader, pass, layout, error, &named));
+    HX_CHECK(layout.blocks.Size() == 1u && layout.blocks[0].name == "material");
+    // Lit's texture has no property: a named texture slot.
+    HX_REQUIRE(Prepare(a, "Lit", "Forward", shader, pass, error) && BindProperties(shader, pass, layout, error, &named));
+    bool albedo = false;
+    for (const NamedTexture& t : layout.namedTextures)
+        albedo = albedo || (t.name == "albedo" && t.slot == 1);
+    HX_CHECK(albedo && !layout.blocks.Empty());
+}

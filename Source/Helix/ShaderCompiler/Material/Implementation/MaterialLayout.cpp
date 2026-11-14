@@ -69,7 +69,7 @@ namespace helix::shadercompiler
         }
     }
 
-    bool BindProperties(const ShaderDescription& shader, const PassReflection& pass, MaterialLayout& out, String& error)
+    bool BindProperties(const ShaderDescription& shader, const PassReflection& pass, MaterialLayout& out, String& error, const NamedValues* named)
     {
         out = MaterialLayout();
         error.Clear();
@@ -156,6 +156,20 @@ namespace helix::shadercompiler
             }
             if (!used)
                 out.unused.Push(p);
+        }
+        if (named)
+        {
+            for (usize b = 0; b < pass.blocks.Size(); b++)
+            {
+                bool reserved = false;
+                for (u32 slot : named->reservedSlots)
+                    reserved = reserved || pass.blocks[b].slot == slot;
+                if (!reserved && blockIndex[b] < 0 && !pass.blocks[b].members.Empty())
+                    (void)materialBlock(b);
+            }
+            for (const ReflectedResource& r : pass.resources)
+                if (r.kind == ResourceKind::Texture && !shader.FindProperty(r.name))
+                    out.namedTextures.Push({r.name, r.slot});
         }
         for (usize b = 0; b < pass.blocks.Size(); b++)
             if (blockIndex[b] >= 0)
