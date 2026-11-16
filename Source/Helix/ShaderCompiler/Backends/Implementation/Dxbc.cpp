@@ -55,6 +55,10 @@ namespace helix::shadercompiler
             u32 reg = 0;
             u32 index = 0;
             u32 imm[4] = {};
+            // A constant buffer register at `index` plus a temp's component (an array read at a computed index).
+            bool relative = false;
+            u32 relativeReg = 0;
+            u8 relativeComp = 0;
 
             u8 Component(u32 i) const { return swizzle[i < count ? i : count - 1u]; }
         };
@@ -114,6 +118,8 @@ namespace helix::shadercompiler
             struct Resource
             {
                 u32 slot, size;
+                // Read at computed registers (declared dynamically indexed).
+                bool dynamic = false;
             };
             Array<Resource> buffers;
             Array<u32> textures;
@@ -181,13 +187,23 @@ namespace helix::shadercompiler
                     selection = 0xAu | (u32(s.Component(u32(select))) << 4);
                 else
                     selection = 0x6u | ((u32(s.Component(0)) | (u32(s.Component(1)) << 2) | (u32(s.Component(2)) << 4) | (u32(s.Component(3)) << 6)) << 4);
-                in.words.Push(selection | (type << 12) | (dimension << 20) | (s.modifier ? 0x80000000u : 0u));
+                // The second index of a relative constant buffer operand is an immediate plus a register.
+                u32 representation = s.kind == Src::Buffer && s.relative ? 3u << 25 : 0u;
+                in.words.Push(selection | (type << 12) | (dimension << 20) | representation | (s.modifier ? 0x80000000u : 0u));
                 if (s.modifier)
                     in.words.Push(0x1u | (u32(s.modifier) << 6));
                 if (s.kind != Src::ThreadId)
                     in.words.Push(s.reg);
                 if (s.kind == Src::Buffer)
+                {
                     in.words.Push(s.index);
+                    if (s.relative)
+                    {
+                        // r<relativeReg>.<relativeComp>: one component of a temp.
+                        in.words.Push(0xAu | (u32(s.relativeComp) << 4) | (1u << 20));
+                        in.words.Push(s.relativeReg);
+                    }
+                }
             }
 
             void Simple(u32 opcode)
@@ -826,6 +842,33 @@ namespace helix::shadercompiler
 
             static bool IsFloat(Type t) { return t.base == BaseType::Float; }
 
+            // Whether an array value is read straight from one constant buffer with its elements at a fixed register
+            // stride (each element's registers laid out as the first's).
+            static bool ConstantBufferArray(const Value& whole, u32 per, u32 count)
+            {
+                if (count == 0 || per == 0 || whole.parts.Size() < usize(per) * count)
+                    return false;
+                const Src& first = whole.parts[0];
+                if (first.kind != Src::Buffer || first.relative)
+                    return false;
+                u32 stride = count > 1 ? whole.parts[per].index - first.index : 1u;
+                if (count > 1 && (whole.parts[per].index <= first.index))
+                    return false;
+                for (u32 k = 0; k < count; k++)
+                    for (u32 j = 0; j < per; j++)
+                    {
+                        const Src& a = whole.parts[j];
+                        const Src& b = whole.parts[k * per + j];
+                        if (b.kind != Src::Buffer || b.relative || b.reg != first.reg || b.index != a.index + k * stride || b.count != a.count ||
+                            b.modifier != a.modifier)
+                            return false;
+                        for (u32 c = 0; c < 4; c++)
+                            if (b.swizzle[c] != a.swizzle[c])
+                                return false;
+                    }
+                return true;
+            }
+
             Value Single(Type t, const Src& s) const
             {
                 Value v;
@@ -1462,6 +1505,27 @@ namespace helix::shadercompiler
                             u32 k = Min(idx.imm[idx.Component(0)], count - 1);
                             for (u32 j = 0; j < per; j++)
                                 out.parts.Push(whole.parts[k * per + j]);
+                            return true;
+                        }
+                        // An array in a constant buffer, its elements at a fixed register stride: read at the computed register
+                        // (the index kept within the array, as the selection below keeps it).
+                        if (ConstantBufferArray(whole, per, count))
+                        {
+                            u32 stride = count > 1 ? whole.parts[per].index - whole.parts[0].index : 1u;
+                            Src at = Emit(kUmin, 1, Scalar(idx), ImmI(count - 1), false);
+                            if (stride != 1)
+                                at = Arithmetic(Op::Mul, Type::Scalar(BaseType::UInt), 1, at, ImmI(stride));
+                            for (Resource& r : buffers)
+                                if (r.slot == whole.parts[0].reg)
+                                    r.dynamic = true;
+                            for (u32 j = 0; j < per; j++)
+                            {
+                                Src part = whole.parts[j];
+                                part.relative = true;
+                                part.relativeReg = at.reg;
+                                part.relativeComp = at.Component(0);
+                                out.parts.Push(part);
+                            }
                             return true;
                         }
                         Array<Src> matches;
@@ -2174,7 +2238,7 @@ namespace helix::shadercompiler
                 Array<u32> body;
                 for (const Resource& b : buffers)
                 {
-                    u32 words[] = {kDclConstantBuffer | (4u << 24), 0x00208E46u, b.slot, b.size};
+                    u32 words[] = {kDclConstantBuffer | (b.dynamic ? 1u << 11 : 0u) | (4u << 24), 0x00208E46u, b.slot, b.size};
                     body.Append(words, 4);
                 }
                 for (u32 slot : textures)

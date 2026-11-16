@@ -319,6 +319,8 @@ vec4 f_Fragment_0(in S_Varyings_0 p_input)
   constant or computed indices. In a uniform block every element starts on 16 bytes, so the elements must be `float4`,
   matrices or structs padded to a multiple of 16 bytes; other elements are rejected with the sizes on both sides. Fixed
   buffers (`fixed float x[4]`) need unsafe code and are rejected with a message that names `[InlineArray]`.
+  On Direct3D an array of a uniform block read at a computed index is read from the constant buffer at a computed
+  register (the buffer declared dynamically indexed); arrays in registers are picked with conditional moves.
 - Static methods, generic methods, `ref`, `out` and `in` parameters, ref locals, methods of user structs, local
   functions (also ones that read and write variables of the enclosing method).
 - Properties of user structs (get, set, init, auto properties, readonly members, object initializers), also on
