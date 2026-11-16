@@ -139,6 +139,7 @@ namespace helix::shadercompiler
             r.slot = g.slot;
             r.element = g.element;
             r.comparison = g.comparison;
+            r.cube = g.type.base == BaseType::TextureCube;
             if (g.kind == GlobalKind::Storage)
             {
                 bool image = g.type.base == BaseType::Image;
@@ -165,10 +166,11 @@ namespace helix::shadercompiler
             if (p.type.base == BaseType::Struct)
             {
                 for (const StructField& f : m.structs[p.type.structIndex].fields)
-                    if (!Value(f.semantic, f.semanticIndex, f.type, f.flat, f.name, Format("field {} of parameter {}", f.name, p.name), out.inputs, error))
+                    if (!f.unread &&
+                        !Value(f.semantic, f.semanticIndex, f.type, f.flat, f.name, Format("field {} of parameter {}", f.name, p.name), out.inputs, error))
                         return false;
             }
-            else if (!Value(p.semantic, p.semanticIndex, p.type, p.flat, p.name, Format("parameter {}", p.name), out.inputs, error))
+            else if (!p.unread && !Value(p.semantic, p.semanticIndex, p.type, p.flat, p.name, Format("parameter {}", p.name), out.inputs, error))
                 return false;
         }
         Type r = entry.returnType;

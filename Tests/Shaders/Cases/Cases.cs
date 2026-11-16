@@ -38,6 +38,28 @@ public static class Gradient
     public static float4 Fragment([Location(0)] float2 uv) => new float4(uv, 0.25f, 1.0f);
 }
 
+/// <summary>Structs made with object initializers that set some of their fields: the others are zero.</summary>
+public static class PartialInitializer
+{
+    struct Parts
+    {
+        public float2 a;
+        public float b;
+        public float c;
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        Parts p = new Parts { a = uv };
+        Parts q = new Parts { c = uv.y };
+        if (uv.x > 0.5f)
+            q = new Parts { b = 0.75f };
+        return new float4(p.a.x + p.b, p.a.y + p.c, q.b + q.c, 1.0f);
+    }
+}
+
 public static class Arithmetic
 {
     [FragmentShader]
@@ -460,6 +482,27 @@ public static class Discards
         if (((cx + cy) & 1) == 0)
             Discard();
         return new float4(uv.y, uv.x, 1.0f, 1.0f);
+    }
+}
+
+public static class DiscardsInHelpers
+{
+    // The reference's AlphaDiscard shape: a switch argument and a cutoff, the value returned after the test. Direct3D
+    // drivers read `not` of the switch combined with the comparison wrongly: truth values are negated as `ieq x, 0`.
+    static float Clip(float alpha, float cutoff, bool test)
+    {
+        if (test && alpha - cutoff < 0.0f)
+            Discard();
+        return alpha;
+    }
+
+    [FragmentShader]
+    [return: Target(0)]
+    public static float4 Fragment([Location(0)] float2 uv)
+    {
+        float a = Clip(uv.x * uv.y * 2.0f, 0.5f, true);
+        float b = Clip(uv.y, 0.25f, false);
+        return new float4(a, b, 1.0f, 1.0f);
     }
 }
 

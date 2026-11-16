@@ -51,6 +51,8 @@ namespace helix::shadercompiler
         StorageFormat format = StorageFormat::RGBA8;
         // A texture read with a comparison sampler; its slot needs one.
         bool comparison = false;
+        // A TextureCube (its slot takes cube textures).
+        bool cube = false;
     };
 
     // A value entering or leaving the stage.

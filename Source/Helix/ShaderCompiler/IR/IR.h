@@ -84,7 +84,8 @@ namespace helix::shadercompiler
         Semantic semantic = Semantic::None;
         u32 semanticIndex = 0;
         bool flat = false;
-        // Set by LinkStages on a vertex output the fragment stage does not read: the backends do not write it.
+        // Set by LinkStages on a vertex output and on a fragment input at a location the fragment code does not read:
+        // the backends neither write nor declare it.
         bool unread = false;
     };
 
@@ -237,6 +238,8 @@ namespace helix::shadercompiler
         Semantic semantic = Semantic::None;
         u32 semanticIndex = 0;
         bool flat = false;
+        // Set by LinkStages on a fragment parameter at a location the fragment code does not read (not declared).
+        bool unread = false;
     };
 
     // [Unroll] and [Loop] on the C# method: what happens to its loops.

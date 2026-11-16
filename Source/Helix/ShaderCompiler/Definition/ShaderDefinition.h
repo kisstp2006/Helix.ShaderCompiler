@@ -76,6 +76,16 @@ namespace helix::shadercompiler
         BlendFactor source = BlendFactor::One, destination = BlendFactor::Zero;
         BlendFactor sourceAlpha = BlendFactor::One, destinationAlpha = BlendFactor::Zero;
         BlendOperation operation = BlendOperation::Add, operationAlpha = BlendOperation::Add;
+        // Material properties that give the factors and operations instead (empty: the values above).
+        String sourceProperty, destinationProperty, sourceAlphaProperty, destinationAlphaProperty, operationProperty, operationAlphaProperty;
+    };
+
+    // Material properties that give render states their values instead of the attributes (ShaderLab's `Cull [_Cull]`;
+    // empty: the attribute's value). The values are the reference's enums (the engine converts them).
+    struct StateProperties
+    {
+        String cull, zWrite, zTest, offsetFactor, offsetUnits, colorMask, alphaToMask;
+        String stencilReference, stencilReadMask, stencilWriteMask, stencilCompare, stencilPass, stencilFail, stencilZFail;
     };
 
     struct StencilFaceState
@@ -100,6 +110,10 @@ namespace helix::shadercompiler
         bool stencil = false;
         u8 stencilReference = 0, stencilReadMask = 255, stencilWriteMask = 255;
         StencilFaceState stencilFront, stencilBack;
+        StateProperties properties;
+
+        // Whether a state comes from a material property.
+        bool HasProperties() const;
     };
 
     struct ShaderPass

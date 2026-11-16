@@ -698,12 +698,16 @@ namespace helix::shadercompiler
                         FormatAppend(body, "    {} {};\n", Decl(p.type), local);
                         for (const StructField& f : m.structs[p.type.structIndex].fields)
                         {
+                            if (f.unread)
+                                continue;
                             if (!Interface(f.semantic, f.semanticIndex, f.type, f.flat, true, expression, Format("field {} of parameter {}", f.name, p.name)))
                                 return false;
                             FormatAppend(body, "    {}.m_{} = {};\n", local, Ident(f.name), expression);
                         }
                         arguments.Push(Move(local));
                     }
+                    else if (p.unread)
+                        arguments.Push(Format("{}(0)", Decl(p.type)));
                     else
                     {
                         if (!Interface(p.semantic, p.semanticIndex, p.type, p.flat, true, expression, Format("parameter {}", p.name)))

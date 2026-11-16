@@ -151,6 +151,7 @@ namespace helix::shadercompiler
                 binding.property = p;
                 binding.target = PropertyTarget::Texture;
                 binding.slot = r.slot;
+                binding.cube = r.cube;
                 out.bindings.Push(binding);
                 used = true;
             }
@@ -169,7 +170,7 @@ namespace helix::shadercompiler
             }
             for (const ReflectedResource& r : pass.resources)
                 if (r.kind == ResourceKind::Texture && !shader.FindProperty(r.name))
-                    out.namedTextures.Push({r.name, r.slot});
+                    out.namedTextures.Push({r.name, r.slot, r.cube});
         }
         for (usize b = 0; b < pass.blocks.Size(); b++)
             if (blockIndex[b] >= 0)

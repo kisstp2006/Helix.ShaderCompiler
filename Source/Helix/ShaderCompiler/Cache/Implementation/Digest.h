@@ -23,7 +23,7 @@ namespace helix::shadercompiler
             {
                 Text(v.name);
                 Add(v.type);
-                U64(u64(v.mode) | (u64(v.semantic) << 8) | (u64(v.flat) << 16) | (u64(v.semanticIndex) << 32));
+                U64(u64(v.mode) | (u64(v.semantic) << 8) | (u64(v.flat) << 16) | (u64(v.unread) << 24) | (u64(v.semanticIndex) << 32));
             }
             // Expressions are hashed by content from the statements that use them: what is left in the table of a
             // function after branches were removed does not count, so variants with the same code get the same key.

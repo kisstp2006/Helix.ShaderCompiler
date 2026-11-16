@@ -27,8 +27,9 @@ namespace helix::shadercompiler
         PropertyTarget target = PropertyTarget::Member;
         // Member and ScaleOffset: index into MaterialLayout::blocks, and where the value lies in the block.
         u32 block = 0, offset = 0, size = 0;
-        // Texture: the slot.
+        // Texture: the slot, and whether it takes cube textures.
         u32 slot = 0;
+        bool cube = false;
     };
 
     // A uniform block that takes at least one property.
@@ -47,6 +48,7 @@ namespace helix::shadercompiler
     {
         String name;
         u32 slot = 0;
+        bool cube = false;
     };
 
     struct MaterialLayout

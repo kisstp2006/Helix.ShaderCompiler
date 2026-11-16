@@ -106,6 +106,8 @@ namespace helix::shadercompiler
                 i32 flagReg = -1;
                 u32 loopDepth = 0;
                 bool entry = false;
+                // A callee that returns only at its end: copied in without the loop (its return stores the value).
+                bool straight = false;
             };
             Array<Dst> entryOutputs;
 
@@ -1499,6 +1501,10 @@ namespace helix::shadercompiler
                     {
                         if (e.op == Op::Neg)
                             out.parts.Push(IsFloat(a.type) ? Emit(kMov, s.count, Neg(s)) : Emit(kIneg, s.count, s, false));
+                        else if (a.type.base == BaseType::Bool)
+                            // A truth value's negation as a comparison with zero (drivers misread `not` of comparison
+                            // results combined with `or`).
+                            out.parts.Push(Emit(kIeq, s.count, s, ImmI(0), false));
                         else
                             out.parts.Push(Emit(kNot, s.count, s, false));
                     }
@@ -1601,6 +1607,32 @@ namespace helix::shadercompiler
                 return false;
             }
 
+            static bool ContainsReturn(const Array<Stmt>& stmts)
+            {
+                for (const Stmt& s : stmts)
+                    if (s.kind == StmtKind::Return || ContainsReturn(s.body) || ContainsReturn(s.elseBody))
+                        return true;
+                return false;
+            }
+
+            // Whether the body's only return is its last statement (or it has none).
+            static bool ReturnsOnlyAtEnd(const Array<Stmt>& stmts)
+            {
+                for (usize i = 0; i < stmts.Size(); i++)
+                {
+                    const Stmt& s = stmts[i];
+                    if (s.kind == StmtKind::Return)
+                    {
+                        if (i + 1 != stmts.Size())
+                            return false;
+                        continue;
+                    }
+                    if (ContainsReturn(s.body) || ContainsReturn(s.elseBody))
+                        return false;
+                }
+                return true;
+            }
+
             void AllocateVariables(Instance& inst)
             {
                 for (const helix::shadercompiler::Variable& v : inst.fn->params)
@@ -1610,7 +1642,8 @@ namespace helix::shadercompiler
             }
 
             // The bytecode has no functions: the body is copied in, wrapped in a loop that runs once so that a return is
-            // a break. A return inside a loop of the callee sets a flag that every enclosing loop checks.
+            // a break. A return inside a loop of the callee sets a flag that every enclosing loop checks. A body that
+            // returns only at its end is copied in as it is (drivers did not discard inside such a loop).
             bool Call(Instance& caller, const Expr& e, Value& out)
             {
                 const Function& callee = m.functions[e.index];
@@ -1625,7 +1658,8 @@ namespace helix::shadercompiler
                 inst.fn = &callee;
                 AllocateVariables(inst);
                 inst.retReg = Allocate(callee.returnType);
-                if (hasLoop[e.index])
+                inst.straight = ReturnsOnlyAtEnd(callee.body);
+                if (hasLoop[e.index] && !inst.straight)
                 {
                     inst.flagReg = i32(NewTemp(1, false).reg);
                     Dst flag;
@@ -1635,11 +1669,15 @@ namespace helix::shadercompiler
                 for (usize i = 0; i < e.args.Size(); i++)
                     if (callee.params[i].mode != ParamMode::Out)
                         StoreValue(Places(Variable(callee.params[i].type, inst.paramReg[i])), args[i]);
-                Simple(kLoop);
+                if (!inst.straight)
+                    Simple(kLoop);
                 if (!Statements(inst, callee.body))
                     return false;
-                Simple(kBreak);
-                Simple(kEndloop);
+                if (!inst.straight)
+                {
+                    Simple(kBreak);
+                    Simple(kEndloop);
+                }
                 for (usize i = 0; i < e.args.Size(); i++)
                 {
                     if (callee.params[i].mode == ParamMode::In)
@@ -1790,6 +1828,8 @@ namespace helix::shadercompiler
                             return false;
                         StoreValue(Places(Variable(in.fn->returnType, in.retReg)), value);
                     }
+                    if (in.straight)
+                        return true;
                     if (in.loopDepth > 0)
                     {
                         Dst flag;
@@ -1835,7 +1875,7 @@ namespace helix::shadercompiler
                         return false;
                     in.loopDepth--;
                     Simple(kEndloop);
-                    if (!in.entry && in.flagReg >= 0)
+                    if (!in.entry && !in.straight && in.flagReg >= 0)
                     {
                         // The callee returned from inside the loop: leave the next enclosing loop too.
                         Src flag;
@@ -2084,11 +2124,16 @@ namespace helix::shadercompiler
                         {
                             if (RegisterCount(f.type) != 1)
                                 return Fail(Format("field {} of parameter {} must be a scalar or vector", f.name, p.name));
+                            if (f.unread)
+                            {
+                                part++;
+                                continue;
+                            }
                             if (!Input(f.semantic, f.semanticIndex, f.type, f.flat, places[part++], systemRegister, Format("field {} of parameter {}", f.name, p.name)))
                                 return false;
                         }
                     }
-                    else if (!Input(p.semantic, p.semanticIndex, p.type, p.flat, places[0], systemRegister, Format("parameter {}", p.name)))
+                    else if (!p.unread && !Input(p.semantic, p.semanticIndex, p.type, p.flat, places[0], systemRegister, Format("parameter {}", p.name)))
                         return false;
                 }
                 freeSystemRegister = systemRegister;

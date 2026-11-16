@@ -262,6 +262,22 @@ namespace helix::shadercompiler
                 s.colorMask = u8(attribute.Integer("ColorMask", base.colorMask) & 15);
                 s.alphaToMask = attribute.Integer("AlphaToMask", base.alphaToMask ? 1 : 0) != 0;
                 s.conservative = attribute.Integer("Conservative", base.conservative ? 1 : 0) != 0;
+                // States from material properties: a value set here replaces the SubShader's property, a property
+                // named here replaces its value.
+                StateProperties& p = s.properties;
+                auto property = [&](StringView valueKey, StringView key, String& into) {
+                    if (attribute.Named(valueKey))
+                        into = String();
+                    if (StringView t = attribute.Text(key); !t.Empty())
+                        into = String(t);
+                };
+                property("Cull", "CullProperty", p.cull);
+                property("ZWrite", "ZWriteProperty", p.zWrite);
+                property("ZTest", "ZTestProperty", p.zTest);
+                property("OffsetFactor", "OffsetFactorProperty", p.offsetFactor);
+                property("OffsetUnits", "OffsetUnitsProperty", p.offsetUnits);
+                property("ColorMask", "ColorMaskProperty", p.colorMask);
+                property("AlphaToMask", "AlphaToMaskProperty", p.alphaToMask);
                 // Blending and stencil of its own replace those of the SubShader as a whole.
                 bool ownBlend = false, ownStencil = false;
                 for (const Attribute& b : attributes)
@@ -274,6 +290,8 @@ namespace helix::shadercompiler
                     if (b.name == "StencilAttribute" && !ownStencil)
                     {
                         RenderState none;
+                        s.properties.stencilReference = s.properties.stencilReadMask = s.properties.stencilWriteMask = String();
+                        s.properties.stencilCompare = s.properties.stencilPass = s.properties.stencilFail = s.properties.stencilZFail = String();
                         s.stencil = false;
                         s.stencilReference = none.stencilReference;
                         s.stencilReadMask = none.stencilReadMask;
@@ -282,16 +300,27 @@ namespace helix::shadercompiler
                         s.stencilBack = none.stencilBack;
                         ownStencil = true;
                     }
-                    if (b.name == "BlendAttribute" && (b.fixed.Size() == 2 || b.fixed.Size() == 4))
+                    if (b.name == "BlendAttribute" && (b.fixed.Empty() || b.fixed.Size() == 2 || b.fixed.Size() == 4))
                     {
                         BlendState blend;
                         blend.target = i32(b.Integer("Target", -1));
-                        blend.source = BlendFactor(b.fixed[0].integer);
-                        blend.destination = BlendFactor(b.fixed[1].integer);
+                        blend.source = b.fixed.Empty() ? BlendFactor::One : BlendFactor(b.fixed[0].integer);
+                        blend.destination = b.fixed.Empty() ? BlendFactor::Zero : BlendFactor(b.fixed[1].integer);
                         blend.sourceAlpha = b.fixed.Size() == 4 ? BlendFactor(b.fixed[2].integer) : blend.source;
                         blend.destinationAlpha = b.fixed.Size() == 4 ? BlendFactor(b.fixed[3].integer) : blend.destination;
                         blend.operation = BlendOperation(b.Integer("Operation", 0));
                         blend.operationAlpha = BlendOperation(b.Integer("OperationAlpha", 0));
+                        blend.sourceProperty = String(b.Text("SourceProperty"));
+                        blend.destinationProperty = String(b.Text("DestinationProperty"));
+                        // The alpha factors follow the color ones unless named apart (as ShaderLab's two factor Blend).
+                        blend.sourceAlphaProperty = String(b.Text("SourceAlphaProperty").Empty() && b.fixed.Size() != 4 ? b.Text("SourceProperty")
+                                                                                                                         : b.Text("SourceAlphaProperty"));
+                        blend.destinationAlphaProperty =
+                            String(b.Text("DestinationAlphaProperty").Empty() && b.fixed.Size() != 4 ? b.Text("DestinationProperty") : b.Text("DestinationAlphaProperty"));
+                        blend.operationProperty = String(b.Text("OperationProperty"));
+                        blend.operationAlphaProperty = String(b.Text("OperationAlphaProperty"));
+                        if (b.fixed.Empty() && (blend.sourceProperty.Empty() || blend.destinationProperty.Empty()))
+                            return Fail(shader, Format("{}: a Blend without factors names their properties (SourceProperty and DestinationProperty)", owner));
                         for (const BlendState& other : s.blend)
                             if (other.target == blend.target)
                                 return Fail(shader, Format("{} sets the blending of one target twice", owner));
@@ -303,6 +332,18 @@ namespace helix::shadercompiler
                         s.stencilReference = u8(b.Integer("Reference", s.stencilReference));
                         s.stencilReadMask = u8(b.Integer("ReadMask", s.stencilReadMask));
                         s.stencilWriteMask = u8(b.Integer("WriteMask", s.stencilWriteMask));
+                        StateProperties& sp = s.properties;
+                        auto stencilProperty = [&](StringView key, String& into) {
+                            if (StringView t = b.Text(key); !t.Empty())
+                                into = String(t);
+                        };
+                        stencilProperty("ReferenceProperty", sp.stencilReference);
+                        stencilProperty("ReadMaskProperty", sp.stencilReadMask);
+                        stencilProperty("WriteMaskProperty", sp.stencilWriteMask);
+                        stencilProperty("CompareProperty", sp.stencilCompare);
+                        stencilProperty("PassProperty", sp.stencilPass);
+                        stencilProperty("FailProperty", sp.stencilFail);
+                        stencilProperty("ZFailProperty", sp.stencilZFail);
                         StencilFaceState face;
                         face.compare = CompareFunction(b.Integer("Compare", i64(CompareFunction::Always)));
                         face.pass = StencilOperation(b.Integer("Pass", 0));
@@ -641,6 +682,21 @@ namespace helix::shadercompiler
             if (p.name == propertyName)
                 return &p;
         return nullptr;
+    }
+
+    bool RenderState::HasProperties() const
+    {
+        const StateProperties& p = properties;
+        for (const String* name : {&p.cull, &p.zWrite, &p.zTest, &p.offsetFactor, &p.offsetUnits, &p.colorMask, &p.alphaToMask, &p.stencilReference,
+                                   &p.stencilReadMask, &p.stencilWriteMask, &p.stencilCompare, &p.stencilPass, &p.stencilFail, &p.stencilZFail})
+            if (!name->Empty())
+                return true;
+        for (const BlendState& b : blend)
+            for (const String* name : {&b.sourceProperty, &b.destinationProperty, &b.sourceAlphaProperty, &b.destinationAlphaProperty, &b.operationProperty,
+                                       &b.operationAlphaProperty})
+                if (!name->Empty())
+                    return true;
+        return false;
     }
 
     const ShaderKeyword* ShaderDescription::FindKeyword(StringView keywordName) const

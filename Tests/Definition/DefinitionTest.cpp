@@ -123,6 +123,37 @@ HX_TEST(Definition, ReadsPassesWithRenderState)
              StringView(shader.source).Contains(".z = 1.0") && StringView(shader.source).Contains("hx_block_hx_keywords"));
 }
 
+HX_TEST(Definition, ReadsRenderStatesFromMaterialProperties)
+{
+    // ShaderLab's `Cull [_Cull]`: the names of the properties come with the state (the SubShader's to its passes, a pass's
+    // own replacing them); a Blend without factors names their properties.
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    ShaderDescription surfaced, bad;
+    String error;
+    HX_REQUIRE(ReadShaderDefinition(a, a.FindType("Helix.ShaderTests", "Surfaced"), surfaced, error));
+    HX_REQUIRE(surfaced.passes.Size() == 2u);
+    const RenderState& forward = surfaced.passes[0].state;
+    const StateProperties& p = forward.properties;
+    HX_CHECK(forward.HasProperties() && p.cull == "_Cull" && p.zWrite == "_ZWrite" && p.zTest == "_ZTest" && p.colorMask == "_ColorMask");
+    HX_CHECK(p.alphaToMask == "_AlphaToMask" && p.offsetFactor == "_OffsetFactor" && p.offsetUnits == "_OffsetUnits");
+    HX_CHECK(forward.stencil && p.stencilReference == "_StencilRef" && p.stencilCompare == "_StencilComp" && p.stencilPass.Empty() &&
+             forward.stencilFront.pass == StencilOperation::Replace);
+    HX_REQUIRE(forward.blend.Size() == 2u);
+    const BlendState& all = forward.blend[0].target == -1 ? forward.blend[0] : forward.blend[1];
+    const BlendState& second = forward.blend[0].target == -1 ? forward.blend[1] : forward.blend[0];
+    HX_CHECK(all.sourceProperty == "_SrcBlend" && all.destinationProperty == "_DstBlend" && all.sourceAlphaProperty == "_SrcBlend" &&
+             all.destinationAlphaProperty == "_DstBlend" && all.operationProperty == "_BlendOp" && all.operationAlphaProperty.Empty());
+    HX_CHECK(second.sourceProperty.Empty() && second.sourceAlphaProperty == "_SrcBlendAlpha" && second.destinationAlphaProperty.Empty());
+    // The plain pass keeps the SubShader's property states except the culling it sets itself.
+    const RenderState& plain = surfaced.passes[1].state;
+    HX_CHECK(plain.cull == CullMode::Front && plain.properties.cull.Empty() && plain.properties.zWrite == "_ZWrite" && plain.blend.Empty() &&
+             plain.properties.alphaToMask.Empty() && plain.properties.stencilReference == "_StencilRef");
+    HX_CHECK(!ReadShaderDefinition(a, a.FindType("Helix.ShaderTests", "BadBlend"), bad, error));
+    std::printf("    %s\n", error.CStr());
+    HX_CHECK(StringView(error).Contains("SourceProperty"));
+}
+
 HX_TEST(Definition, ReadsSubShaders)
 {
     Assembly a;

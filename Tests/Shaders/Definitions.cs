@@ -136,6 +136,66 @@ public sealed class Layered : ShaderDefinition
     }
 }
 
+/// <summary>Render states from material properties: a SubShader's culling, depth and stencil, a pass's blending.</summary>
+[Shader("Tests/Surfaced")]
+public sealed class Surfaced : ShaderDefinition
+{
+    [Property("Cull")] public float _Cull;
+    [Property("ZWrite")] public float _ZWrite;
+    [Property("Source")] public float _SrcBlend;
+    [Property("Destination")] public float _DstBlend;
+    [Property("Stencil")] public float _StencilRef;
+
+    [SubShader(CullProperty = "_Cull", ZWriteProperty = "_ZWrite", ZTestProperty = "_ZTest", ColorMaskProperty = "_ColorMask")]
+    [Stencil(ReferenceProperty = "_StencilRef", CompareProperty = "_StencilComp", Pass = StencilOperation.Replace)]
+    public static class Main
+    {
+        [Pass("Forward", AlphaToMaskProperty = "_AlphaToMask", OffsetFactorProperty = "_OffsetFactor", OffsetUnitsProperty = "_OffsetUnits")]
+        [Blend(SourceProperty = "_SrcBlend", DestinationProperty = "_DstBlend", OperationProperty = "_BlendOp")]
+        [Blend(BlendFactor.One, BlendFactor.Zero, BlendFactor.One, BlendFactor.Zero, Target = 1, SourceAlphaProperty = "_SrcBlendAlpha")]
+        public static class Forward
+        {
+            [VertexShader]
+            [return: Position]
+            public static float4 Vertex([Location(0)] float2 p) => new float4(p, 0.0f, 1.0f);
+
+            [FragmentShader]
+            [return: Target(0)]
+            public static float4 Fragment() => new float4(1.0f);
+        }
+
+        [Pass("Plain", Cull = CullMode.Front)]
+        public static class Plain
+        {
+            [VertexShader]
+            [return: Position]
+            public static float4 Vertex([Location(0)] float2 p) => new float4(p, 0.0f, 1.0f);
+
+            [FragmentShader]
+            [return: Target(0)]
+            public static float4 Fragment() => new float4(0.5f);
+        }
+    }
+}
+
+/// <summary>A Blend without factors that names no properties for them.</summary>
+[Shader("Tests/BadBlend")]
+public sealed class BadBlend : ShaderDefinition
+{
+    [Pass("Only")]
+    [Blend(OperationProperty = "_BlendOp")]
+    public static class Only
+    {
+        [VertexShader]
+        [return: Position]
+        public static float4 Vertex([Location(0)] float2 p) => new float4(p, 0.0f, 1.0f);
+
+        [FragmentShader]
+        [return: Target(0)]
+        public static float4 Fragment() => new float4(1.0f);
+    }
+}
+
 /// <summary>Takes passes of other shaders: one of this assembly and one of the include assembly.</summary>
 [Shader("Tests/Borrowing")]
 public sealed class Borrowing : ShaderDefinition

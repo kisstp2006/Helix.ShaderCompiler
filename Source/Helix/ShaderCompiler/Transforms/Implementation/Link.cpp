@@ -48,7 +48,7 @@ namespace helix::shadercompiler
         }
     }
 
-    bool LinkStages(Module& vertex, const Module& fragment, String& error)
+    bool LinkStages(Module& vertex, Module& fragment, String& error)
     {
         error.Clear();
         if (vertex.stage != Stage::Vertex || fragment.stage != Stage::Fragment)
@@ -77,6 +77,14 @@ namespace helix::shadercompiler
         if (r.base == BaseType::Struct)
             for (StructField& f : vertex.structs[r.structIndex].fields)
                 f.unread = f.semantic == Semantic::Location && !read.Contains(f.semanticIndex);
+        for (Variable& p : fragment.functions[fragment.entry].params)
+        {
+            if (p.type.base == BaseType::Struct)
+                for (StructField& f : fragment.structs[p.type.structIndex].fields)
+                    f.unread = f.semantic == Semantic::Location && !read.Contains(f.semanticIndex);
+            else
+                p.unread = p.semantic == Semantic::Location && !read.Contains(p.semanticIndex);
+        }
         return true;
     }
 }

@@ -3,6 +3,7 @@
 #include <Helix/ShaderCompiler/Frontend/Frontend.h>
 #include <Helix/ShaderCompiler/Backends/Dxbc.h>
 #include <Helix/ShaderCompiler/Backends/Glsl.h>
+#include <Helix/ShaderCompiler/Reflection/Reflection.h>
 #include <Helix/ShaderCompiler/Transforms/Link.h>
 #include <Helix/ShaderCompiler/Transforms/Passes.h>
 #include <Helix/Testing/Test.h>
@@ -272,6 +273,25 @@ HX_TEST(Passes, LinkDropsOutputsTheFragmentStageDoesNotRead)
     HX_REQUIRE(EmitGlsl(vertex, GlslTarget::Glsl330, after, error) && EmitDxbc(vertex, code, error));
     HX_CHECK(StringView(before.source).Contains("out vec2 hx_v0") && !StringView(after.source).Contains("hx_v0") &&
              StringView(after.source).Contains("gl_Position"));
+    // The fragment stage takes the struct but reads none of it: it declares no input, and the two stages' reflections
+    // link (as a shadow caster's do).
+    GlslShader fragmentGlsl;
+    DxbcShader fragmentCode;
+    ShaderReflection vertexReflection, fragmentReflection;
+    PassReflection pass;
+    HX_REQUIRE(EmitGlsl(fragment, GlslTarget::Glsl330, fragmentGlsl, error) && EmitDxbc(fragment, fragmentCode, error));
+    HX_CHECK(!StringView(fragmentGlsl.source).Contains("hx_v0"));
+    HX_REQUIRE(Reflect(vertex, vertexReflection, error) && Reflect(fragment, fragmentReflection, error));
+    bool locations = false;
+    for (const ReflectedValue& v : vertexReflection.outputs)
+        locations = locations || v.semantic == Semantic::Location;
+    for (const ReflectedValue& v : fragmentReflection.inputs)
+        locations = locations || v.semantic == Semantic::Location;
+    HX_CHECK(!locations);
+    bool linked = LinkReflection(vertexReflection, fragmentReflection, pass, error);
+    if (!linked)
+        std::printf("    %s\n", error.CStr());
+    HX_CHECK(linked);
 
     // A fragment stage that reads a location the vertex stage does not write cannot be linked.
     Module gradient, positionOnly;
