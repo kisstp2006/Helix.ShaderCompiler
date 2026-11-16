@@ -107,6 +107,8 @@ namespace helix::shadercompiler
         for (const StructType& s : m.structs)
         {
             d.Text(s.name);
+            // The code names a struct by its qualified name: structs of one name in two types are two shaders.
+            d.Text(s.qualifiedName);
             d.U64(s.fields.Size());
             for (const StructField& f : s.fields)
             {

@@ -138,6 +138,27 @@ HX_TEST(Cache, CompilesEveryDistinctVariantOnce)
     HX_CHECK(cache.Misses() == 5u && cache.MemoryHits() == 9u);
 }
 
+HX_TEST(Cache, ModuleKeysTellStructsOfOneNameApart)
+{
+    // Two modules alike but for the qualified name of a struct (MaterialData of two shader classes): the code names
+    // the struct by it, so they are two shaders.
+    Assembly a;
+    HX_REQUIRE(a.Load(TestShadersImage()));
+    ShaderDescription glass;
+    String error;
+    HX_REQUIRE(ReadShaderDefinition(a, a.FindType("Helix.ShaderTests", "Glass"), glass, error));
+    const ShaderPass* forward = glass.FindPass("Forward");
+    HX_REQUIRE(forward != nullptr);
+    Module module;
+    HX_REQUIRE(TranslateEntryPoint(a, forward->fragment, Stage::Fragment, module, error));
+    HX_REQUIRE(!module.structs.Empty());
+    Module other = module;
+    String renamed(module.structs[0].qualifiedName.View());
+    renamed.Append("Elsewhere");
+    other.structs[0].qualifiedName = Move(renamed);
+    HX_CHECK(!(MakeShaderKey(module, ShaderTarget::Glsl330) == MakeShaderKey(other, ShaderTarget::Glsl330)));
+}
+
 HX_TEST(Cache, CompilesKernelVariants)
 {
     Assembly a;
